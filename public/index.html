@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>10-STEP 영어 연습지 생성기 (AI)</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<style>
+:root{ --navy:#1a3a5c; --blue:#2e6da4; --orange:#b5532a; }
+*{ box-sizing:border-box; }
+body{ margin:0; font-family:'Malgun Gothic','Noto Sans KR','Apple SD Gothic Neo',sans-serif; color:#1a1a1a; background:#eef1f5; line-height:1.6; }
+header.top{ background:var(--navy); color:#fff; padding:14px 20px; display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+header.top h1{ font-size:18px; margin:0; }
+header.top .sub{ font-size:12px; opacity:.85; }
+.wrap{ max-width:1200px; margin:18px auto; padding:0 16px; display:grid; grid-template-columns:minmax(0,450px) 1fr; gap:18px; }
+@media(max-width:920px){ .wrap{ grid-template-columns:1fr; } }
+.card{ background:#fff; border:1px solid #dde3ea; border-radius:10px; padding:16px 16px 20px; }
+.stepnum{ display:inline-block; background:var(--blue); color:#fff; border-radius:20px; font-size:11px; padding:2px 10px; margin-right:8px; }
+.card h2{ font-size:15px; color:var(--navy); margin:0 0 6px; }
+.sec{ border-top:1px solid #eef1f4; margin-top:16px; padding-top:14px; }
+label{ display:block; font-size:12.5px; font-weight:700; color:#31465c; margin:10px 0 4px; }
+.hint{ font-weight:400; color:#8a97a5; font-size:11.5px; }
+input[type=text], input[type=password], textarea{ width:100%; border:1px solid #cfd8e2; border-radius:7px; padding:8px 10px; font-size:13px; font-family:inherit; resize:vertical; }
+textarea{ min-height:70px; line-height:1.5; }
+.row2{ display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+.file{ font-size:12px; margin-top:4px; }
+.btns{ display:flex; gap:8px; flex-wrap:wrap; margin-top:16px; }
+button{ cursor:pointer; border:0; border-radius:8px; padding:11px 16px; font-size:13.5px; font-weight:700; font-family:inherit; }
+.accent{ background:var(--orange); color:#fff; }
+.ghost{ background:#eaf1f8; color:var(--navy); }
+.msg{ padding:9px 12px; border-radius:7px; font-size:12.5px; margin-top:10px; display:none; }
+.msg.err{ background:#fdecea; color:#b3261e; border:1px solid #f4c7c3; }
+.msg.ok{ background:#eaf6ec; color:#1e7e34; border:1px solid #c3e6cb; }
+.msg.load{ background:#eef3f8; color:var(--navy); border:1px solid #cdd9e5; }
+details summary{ cursor:pointer; font-weight:700; color:var(--blue); font-size:12.5px; }
+.previewhead{ display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; flex-wrap:wrap; gap:8px; }
+.previewhead .t{ font-size:14px; font-weight:700; color:var(--navy); }
+#sheet{ background:#fff; border:1px solid #dde3ea; border-radius:10px; padding:20px; }
+.doctitle{ text-align:center; border-bottom:2.5px solid var(--navy); padding-bottom:8px; margin-bottom:6px; }
+.doctitle h1{ font-size:20px; margin:0; color:var(--navy); }
+.doctitle .sub{ font-size:12px; color:#555; margin-top:4px; }
+.examhead{ border:1px solid #cdd9e5; background:#f2f7fc; border-radius:6px; padding:10px 14px; margin:10px 0 4px; font-size:12px; color:#243b52; }
+.examhead b{ color:var(--navy); }
+.examhead .line{ margin:2px 0; }
+.rulebox{ border:1px solid #c9c9c9; background:#f7f9fb; border-radius:6px; padding:9px 13px; font-size:11px; color:#333; margin:8px 0 6px; }
+.rulebox b{ color:var(--navy); }
+.phead{ font-size:16px; font-weight:bold; color:#fff; background:var(--navy); padding:7px 12px; border-radius:5px; margin:14px 0 10px; }
+.ptype{ font-size:12px; font-weight:normal; opacity:.9; }
+.pass{ page-break-before:always; }
+.pass:first-of-type{ page-break-before:avoid; }
+.stepblk{ border:1px solid #dfe4ea; border-left:4px solid var(--blue); border-radius:4px; padding:11px 14px 14px; margin:13px 0; page-break-inside:avoid; }
+.stitle{ font-weight:bold; color:var(--blue); font-size:14px; margin-bottom:9px; padding-bottom:4px; border-bottom:1px dotted #cfdae6; }
+.n{ font-weight:bold; color:var(--blue); margin-right:3px; }
+.lab{ font-weight:bold; color:var(--orange); margin-right:4px; }
+.ko{ color:#333; }
+.s1row{ margin:9px 0; page-break-inside:avoid; }
+.s2row{ margin:11px 0; page-break-inside:avoid; }
+.s6row{ margin:15px 0; line-height:1.9; page-break-inside:avoid; }
+.s10row{ margin:13px 0; page-break-inside:avoid; }
+.wline{ border-bottom:1px solid #bbb; height:26px; margin:6px 0 3px; }
+.para{ border:1px dashed #bbb; background:#fcfcfc; padding:11px 12px; border-radius:4px; line-height:2.0; white-space:pre-wrap; }
+.fixrow{ margin-top:12px; }
+.wb2{ display:inline-block; width:86px; border-bottom:1px solid #888; height:15px; }
+.given{ background:#eef3f8; border:1px solid #cdd9e5; border-radius:4px; padding:8px 11px; margin-bottom:9px; }
+.chunk{ margin:8px 0; padding:9px 11px; background:#fafbfc; border:1px solid #e3e7eb; border-radius:4px; line-height:1.8; page-break-inside:avoid; }
+.orderline{ margin-top:11px; font-weight:bold; }
+.boxline{ margin:7px 0 3px; }
+.wb{ display:inline-block; width:32px; border-bottom:1px solid #999; height:15px; margin:0 4px 5px 0; }
+.cnt{ font-size:11px; color:#999; margin-left:5px; }
+.hintline{ font-size:11.5px; color:var(--orange); margin-top:2px; }
+.empty{ color:#c0392b; font-style:italic; }
+@media print{
+  @page{ size:A4; margin:15mm 14mm; }
+  body{ background:#fff; }
+  header.top, .card, .previewhead, .noprint{ display:none !important; }
+  .wrap{ display:block; margin:0; padding:0; max-width:none; }
+  #sheet{ border:0; border-radius:0; padding:0; }
+}
+</style>
+</head>
+<body>
+<header class="top">
+  <h1>10-STEP 영어 지문 연습지 생성기 <span style="font-size:12px;opacity:.8">AI</span></h1>
+  <span class="sub">시험범위 PDF → 학교·학년 → 지침서대로 10STEP 완성 (Render)</span>
+</header>
+
+<div class="wrap">
+  <div class="card noprint">
+    <h2><span class="stepnum">1</span>시험범위 PDF 업로드</h2>
+    <input type="file" id="pdfScope" accept="application/pdf" class="file" onchange="extractTo(this,'scopeText')">
+    <label>추출된 범위 텍스트 <span class="hint">— 생성할 지문만 남기세요(권장 6개 이하)</span></label>
+    <textarea id="scopeText" style="min-height:150px" placeholder="여기에 시험범위 붙여넣기 또는 위에서 PDF 추출"></textarea>
+    <label>문법 포인트 <span class="hint">(선택) — STEP 6·7 출제에 우선 반영</span></label>
+    <textarea id="grammar" placeholder="예: 분사구문, 관계대명사, 수일치, 수동태"></textarea>
+
+    <div class="sec">
+    <h2><span class="stepnum">2</span>학교 · 학년 · 범위</h2>
+    <div class="row2">
+      <div><label>학교명</label><input type="text" id="school" placeholder="○○고등학교"></div>
+      <div><label>학년</label><input type="text" id="grade" placeholder="1학년"></div>
+    </div>
+    <label>출제 범위(상단 표기) <span class="hint">— 프린트 상단에 인쇄됩니다</span></label>
+    <textarea id="examScope" placeholder="예: 1학기 중간 · 교과서 L3~4, 모의고사 18~28번"></textarea>
+    </div>
+
+    <div class="sec">
+    <h2><span class="stepnum">3</span>지침서대로 10STEP 완성</h2>
+    <label>접근 코드 <span class="hint">— 학원에서 코드 설정 시 입력(선택)</span></label>
+    <input type="password" id="accessCode" placeholder="(설정된 경우만)">
+    <div id="msg" class="msg"></div>
+    <div class="btns">
+      <button class="accent" id="genBtn" onclick="aiGenerate()">지침서대로 10STEP 생성</button>
+      <button class="ghost" onclick="window.print()">인쇄 · PDF 저장</button>
+    </div>
+    <details style="margin-top:14px">
+      <summary>AI 결과 직접 수정 (JSON)</summary>
+      <p class="hint" style="margin:8px 0 0">아래 내용을 고친 뒤 [이 내용으로 다시 그리기]를 누르세요.</p>
+      <textarea id="jsonBox" style="min-height:120px;font-family:monospace;font-size:12px"></textarea>
+      <div class="btns"><button class="ghost" onclick="redrawFromJson()">이 내용으로 다시 그리기</button></div>
+    </details>
+    </div>
+  </div>
+
+  <div>
+    <div class="previewhead noprint">
+      <span class="t">미리보기</span>
+      <button class="ghost" onclick="window.print()">인쇄 · PDF 저장</button>
+    </div>
+    <div id="sheet">
+      <div class="doctitle"><h1>10-STEP 영어 지문 연습지</h1><div class="sub">① 시험범위 PDF → ② 학교·학년·범위 → ③ [지침서대로 10STEP 생성]</div></div>
+    </div>
+  </div>
+</div>
+
+<script>
+if (window.pdfjsLib) pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+var PAREN=["(A)","(B)","(C)","(D)","(E)","(F)","(G)","(H)","(I)","(J)"];
+var RESULT=null;
+function esc(s){ return (s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
+function val(id){ var e=document.getElementById(id); return e?e.value.trim():""; }
+function shuffle(a){ a=a.slice(); for(var i=a.length-1;i>0;i--){ var j=Math.floor(Math.random()*(i+1)); var t=a[i];a[i]=a[j];a[j]=t; } return a; }
+function setMsg(kind,txt){ var m=document.getElementById("msg"); m.className="msg "+kind; m.textContent=txt; m.style.display="block"; }
+
+async function extractTo(input, targetId){
+  var f=input.files && input.files[0]; if(!f) return;
+  if(!window.pdfjsLib){ alert("PDF 라이브러리를 불러오지 못했습니다(인터넷 연결 확인)."); return; }
+  try{
+    var buf=await f.arrayBuffer();
+    var pdf=await pdfjsLib.getDocument({data:buf}).promise;
+    var out="";
+    for(var p=1;p<=pdf.numPages;p++){ var page=await pdf.getPage(p); var tc=await page.getTextContent(); out+=tc.items.map(function(it){return it.str;}).join(" ")+"\n"; }
+    var t=document.getElementById(targetId); t.value=(t.value?t.value+"\n":"")+out.trim();
+  }catch(e){ alert("PDF 추출 실패: "+e.message); }
+}
+
+function step(title, inner){ return '<div class="stepblk"><div class="stitle">'+title+'</div>'+inner+'</div>'; }
+
+function renderPassage(p){
+  var eng=p.eng||[], kor=p.kor||[], s3=p.s3||[], s5=p.s5||[], s6=p.s6||[], s10=p.s10||[];
+  var s7=p.s7||"", s9=p.s9||[];
+  var num=p.num||"", type=p.type||"";
+  var o=[];
+  o.push('<div class="phead">지문 '+esc(num)+' <span class="ptype">'+(type?("["+esc(type)+"]"):"")+'</span></div>');
+  o.push(step('STEP 1. 영어 + 해석', (function(){ var b=[]; for(var i=0;i<eng.length;i++){ b.push('<div class="s1row"><span class="n">'+(i+1)+'.</span> '+esc(eng[i])+'<br><span class="ko">'+esc(kor[i]||'')+'</span></div>'); } return b.join(''); })()));
+  o.push(step('STEP 2. 영어 원문 → 해석 쓰기 (문장별)', (function(){ var b=[]; for(var i=0;i<eng.length;i++){ b.push('<div class="s2row"><span class="n">'+(i+1)+'.</span> '+esc(eng[i])+'<div class="wline"></div></div>'); } return b.join(''); })()));
+  o.push(step('STEP 3. 해석 제시 → 빈칸(중요 명사·형용사) 채우기', (function(){ var b=[]; for(var i=0;i<eng.length;i++){ var line=s3[i]||eng[i]; b.push('<div class="s1row"><span class="n">'+(i+1)+'.</span> <span class="ko">'+esc(kor[i]||'')+'</span><br>'+esc(line)+'</div>'); } return b.join(''); })()));
+  o.push(step('STEP 4. 영어 원문 → 해석 쓰기', (function(){ var b=[]; for(var i=0;i<eng.length;i++){ b.push('<div class="s2row"><span class="n">'+(i+1)+'.</span> '+esc(eng[i])+'<div class="wline"></div></div>'); } return b.join(''); })()));
+  o.push(step('STEP 5. 동사를 원형으로 제시 → 알맞은 형태로 고치기', (function(){ var b=[]; for(var i=0;i<eng.length;i++){ var line=s5[i]||eng[i]; b.push('<div class="s2row"><span class="n">'+(i+1)+'.</span> '+esc(line)+'<div class="wline"></div></div>'); } return b.join(''); })()));
+  o.push(step('STEP 6. 어법·어휘 보기 중 알맞은 것 고르기', (function(){ var b=[]; for(var i=0;i<eng.length;i++){ var line=s6[i]||eng[i]; b.push('<div class="s6row"><span class="n">'+(i+1)+'.</span> '+esc(line)+'</div>'); } return b.join(''); })()));
+  o.push(step('STEP 7. 지문 속 어법상 틀린 곳 3군데 찾아 고치기', (function(){ var para=s7||eng.join(' '); return '<div class="para">'+esc(para)+'</div><div class="fixrow">① <span class="wb2"></span> → <span class="wb2"></span>&nbsp;&nbsp; ② <span class="wb2"></span> → <span class="wb2"></span>&nbsp;&nbsp; ③ <span class="wb2"></span> → <span class="wb2"></span></div>'; })()));
+  o.push(step('STEP 8. 첫 문장에 이어질 문장 순서 배열', (function(){ if(eng.length<3){ return '<div class="empty">문장이 3개 이상일 때 배열됩니다.</div>'; } var first=eng[0], rest=shuffle(eng.slice(1)); var b=['<div class="given"><b>[주어진 문장]</b> '+esc(first)+'</div>']; for(var i=0;i<rest.length;i++){ b.push('<div class="s1row"><span class="lab">'+PAREN[i]+'</span> '+esc(rest[i])+'</div>'); } var ord=[]; for(var j=0;j<rest.length;j++){ ord.push('<span class="wb2"></span>'); } b.push('<div class="orderline">순서: '+ord.join(' → ')+'</div>'); return b.join(''); })()));
+  o.push(step('STEP 9. 문단 순서 배열', (function(){ var chunks=s9.slice(); if(chunks.length<2){ var n=eng.length,g=Math.max(1,Math.ceil(n/3)),tmp=[]; for(var i=0;i<n;i+=g){ tmp.push(eng.slice(i,i+g).join(' ')); } chunks=tmp; } if(chunks.length<2){ return '<div class="empty">문단이 2개 이상일 때 배열됩니다.</div>'; } var sh=shuffle(chunks),b=[]; for(var k=0;k<sh.length;k++){ b.push('<div class="chunk"><span class="lab">'+PAREN[k]+'</span> '+esc(sh[k])+'</div>'); } var ord=[]; for(var m=0;m<sh.length;m++){ ord.push('<span class="wb2"></span>'); } b.push('<div class="orderline">순서: '+ord.join(' → ')+'</div>'); return b.join(''); })()));
+  o.push(step('STEP 10. 영작 (해석 + 제시어, 빈칸 수 = 단어 수)', (function(){ var b=[]; for(var i=0;i<eng.length;i++){ var wc=eng[i].split(/\s+/).filter(function(x){return x.length;}).length; var boxes=''; for(var j=0;j<wc;j++){ boxes+='<span class="wb"></span>'; } var hint=s10[i]?('<div class="hintline">제시어: '+esc(s10[i])+'</div>'):''; b.push('<div class="s10row"><span class="n">'+(i+1)+'.</span> <span class="ko">'+esc(kor[i]||'')+'</span><div class="boxline">'+boxes+'<span class="cnt">('+wc+' 단어)</span></div>'+hint+'</div>'); } return b.join(''); })()));
+  return '<div class="pass">'+o.join('')+'</div>';
+}
+
+function render(){
+  var o=[];
+  o.push('<div class="doctitle"><h1>10-STEP 영어 지문 연습지</h1><div class="sub">지침서 기준 자동 생성</div></div>');
+  var school=val("school"), grade=val("grade"), es=val("examScope"), gr=val("grammar");
+  var head=[];
+  if(school||grade) head.push('<div class="line"><b>'+esc(school)+(grade?(' '+esc(grade)):'')+'</b></div>');
+  if(es) head.push('<div class="line"><b>출제 범위</b> · '+esc(es)+'</div>');
+  if(gr) head.push('<div class="line"><b>문법</b> · '+esc(gr)+'</div>');
+  if(head.length) o.push('<div class="examhead">'+head.join('')+'</div>');
+  o.push('<div class="rulebox"><b>학습 안내</b> · 원문은 수정·삭제·축약 없이 사용합니다. STEP 7은 어법 오류가 <b>3군데</b> 삽입되어 있습니다. 모든 STEP에 정답은 없습니다. 각 문장은 번호 옆 같은 줄에 작성하세요.</div>');
+  if(!RESULT || !RESULT.passages || !RESULT.passages.length){
+    o.push('<div class="rulebox">아직 생성된 지문이 없습니다. ③ [지침서대로 10STEP 생성]을 눌러주세요.</div>');
+  } else {
+    for(var i=0;i<RESULT.passages.length;i++){ o.push(renderPassage(RESULT.passages[i])); }
+  }
+  document.getElementById("sheet").innerHTML=o.join('');
+}
+
+async function aiGenerate(){
+  var text=val("scopeText");
+  if(!text){ setMsg("err","시험범위 텍스트를 입력하거나 PDF에서 추출하세요."); return; }
+  var btn=document.getElementById("genBtn"); btn.disabled=true;
+  setMsg("load","AI가 지침서대로 10STEP을 생성 중입니다… (지문 수에 따라 시간이 걸립니다. 첫 요청은 서버가 깨어나며 최대 1분)");
+  try{
+    var resp=await fetch("/api/generate",{ method:"POST", headers:{"content-type":"application/json"}, body:JSON.stringify({ text:text, grammar:val("grammar"), accessCode:val("accessCode") }) });
+    var data=await resp.json();
+    if(!resp.ok){
+      var em=data.error||data.errorMessage||("오류 "+resp.status);
+      if(resp.status===401){ em="접근 코드가 올바르지 않습니다."; }
+      setMsg("err", em); btn.disabled=false; return;
+    }
+    RESULT=data;
+    document.getElementById("jsonBox").value=JSON.stringify(data,null,2);
+    render();
+    var cnt=(data.passages||[]).length;
+    setMsg("ok", cnt+"개 지문 생성 완료! 미리보기를 확인하고 필요하면 'AI 결과 직접 수정'에서 다듬으세요.");
+  }catch(e){
+    var m=e.message||"";
+    setMsg("err","요청 실패: "+m+" · 무료 서버는 15분 미사용 후 첫 요청이 느릴 수 있어요(깨어나는 중). 30초~1분 뒤 다시 눌러보세요.");
+  }
+  btn.disabled=false;
+}
+
+function redrawFromJson(){
+  try{ RESULT=JSON.parse(document.getElementById("jsonBox").value); render(); setMsg("ok","다시 그렸습니다."); }
+  catch(e){ setMsg("err","JSON 형식 오류: "+e.message); }
+}
+</script>
+</body>
+</html>
