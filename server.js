@@ -1,5 +1,5 @@
 // Render web service: 시험범위 → 10-STEP 생성 (Claude API). STEP 1~5 / 6~10 분할 생성으로 응답 잘림 최소화.
-// 환경변수: ANTHROPIC_API_KEY(필수), MODEL(기본 claude-sonnet-5), ACCESS_CODE(선택), MAX_PASSAGES(기본 3), MAX_TOKENS(기본 12000)
+// 환경변수: ANTHROPIC_API_KEY(필수), MODEL(기본 claude-sonnet-5), ACCESS_CODE(선택), MAX_PASSAGES(기본 1), MAX_TOKENS(기본 12000)
 
 const express = require("express");
 const app = express();
@@ -41,7 +41,7 @@ app.post("/api/generate", async (req, res) => {
   if (process.env.ACCESS_CODE && (body.accessCode || "") !== process.env.ACCESS_CODE) return res.status(401).json({ error: "접근 코드가 올바르지 않습니다." });
 
   const grammar = (body.grammar || "").trim();
-  const maxP = parseInt(process.env.MAX_PASSAGES || "3", 10);
+  const maxP = parseInt(process.env.MAX_PASSAGES || "1", 10);
   const part = body.part || "all";
   let userMsg;
 

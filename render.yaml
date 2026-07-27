@@ -10,5 +10,3 @@ services:
         sync: false
       - key: MODEL
         value: claude-sonnet-5
-      - key: MAX_PASSAGES
-        value: "6"
