@@ -7,7 +7,7 @@
 
 const express = require("express");
 const app = express();
-app.use(express.json({ limit: "3mb" }));
+app.use(express.json({ limit: "25mb" }));
 app.use(express.static("public"));
 
 const GUIDE = `당신은 학원 영어 지문 10-STEP 연습지 제작 도우미다. 아래 지침서를 반드시 지킨다.
@@ -42,7 +42,7 @@ app.post("/api/generate", async (req, res) => {
   const text = (body.text || "").trim();
   if (!text) return res.status(400).json({ error: "시험범위 텍스트가 비어 있습니다." });
   const grammar = (body.grammar || "").trim();
-  const maxP = parseInt(process.env.MAX_PASSAGES || "6", 10);
+  const maxP = parseInt(process.env.MAX_PASSAGES || "3", 10);
 
   const userMsg =
     "다음은 시험범위에서 추출한 텍스트다. 영어 독해 지문만 골라(최대 " + maxP + "개), 각 지문마다 10-STEP 데이터를 지침서대로 만들어라. 도표·안내문·듣기·선택지·한글 설명은 제외한다.\n\n" +
@@ -61,20 +61,88 @@ app.post("/api/generate", async (req, res) => {
     if (!resp.ok) return res.status(502).json({ error: "Claude API 오류: " + (data && data.error ? data.error.message : resp.status) });
     let out = "";
     if (data.content && data.content.length) out = data.content.map((c) => c.text || "").join("");
-    const parsed = extractJson(out);
-    if (!parsed || !parsed.passages) return res.status(502).json({ error: "AI 응답을 해석하지 못했습니다.", raw: out.slice(0, 400) });
+    const parsed = extractPayload(out);
+    if (!parsed || !parsed.passages || !parsed.passages.length) {
+      console.error("PARSE FAIL. stop_reason=", data.stop_reason, " raw(first 1200):\n", out.slice(0, 1200));
+      return res.status(502).json({ error: "AI 응답을 해석하지 못했습니다.", stop_reason: data.stop_reason || "", raw: out.slice(0, 600) });
+    }
+    if (data.stop_reason === "max_tokens") console.warn("응답이 max_tokens로 잘렸지만 완성된 지문만 살려서 반환함. passages=", parsed.passages.length);
     return res.json(parsed);
   } catch (e) {
     return res.status(500).json({ error: "요청 실패: " + e.message });
   }
 });
 
-function extractJson(t) {
+function extractPayload(t) {
   if (!t) return null;
+  t = t.replace(/```json/gi, "").replace(/```/g, "");
+  // 1) 통째로 파싱 시도
   const s = t.indexOf("{"), e = t.lastIndexOf("}");
-  if (s < 0 || e < 0 || e <= s) return null;
-  try { return JSON.parse(t.slice(s, e + 1)); } catch (err) { return null; }
+  if (s >= 0 && e > s) {
+    try {
+      const o = JSON.parse(t.slice(s, e + 1));
+      if (o && Array.isArray(o.passages)) return o;
+      if (o && Array.isArray(o)) return { passages: o };
+      if (o && o.eng) return { passages: [o] };
+    } catch (err) { /* fall through */ }
+  }
+  // 2) 잘린 응답 복구: passages 배열에서 완성된 객체만 수집
+  const arr = salvagePassages(t);
+  if (arr && arr.length) return { passages: arr };
+  return null;
 }
+
+function salvagePassages(t) {
+  let key = t.indexOf('"passages"');
+  let i = key >= 0 ? t.indexOf("[", key) : t.indexOf("[");
+  if (i < 0) return null;
+  i++;
+  const objs = [];
+  const n = t.length;
+  while (i < n) {
+    while (i < n && (t[i] === "," || t[i] === " " || t[i] === "\n" || t[i] === "\r" || t[i] === "\t")) i++;
+    if (i >= n || t[i] === "]") break;
+    if (t[i] !== "{") break;
+    let depth = 0, j = i, inStr = false, esc = false;
+    for (; j < n; j++) {
+      const c = t[j];
+      if (inStr) { if (esc) esc = false; else if (c === "\\") esc = true; else if (c === '"') inStr = false; }
+      else { if (c === '"') inStr = true; else if (c === "{") depth++; else if (c === "}") { depth--; if (depth === 0) { j++; break; } } }
+    }
+    if (depth !== 0) break; // 마지막 객체가 잘림 -> 여기서 중단
+    try { objs.push(JSON.parse(t.slice(i, j))); } catch (err) { break; }
+    i = j;
+  }
+  return objs;
+}
+
+app.post("/api/ocr", async (req, res) => {
+  const body = req.body || {};
+  const key = process.env.ANTHROPIC_API_KEY;
+  if (!key) return res.status(500).json({ error: "서버에 ANTHROPIC_API_KEY가 설정되지 않았습니다." });
+  if (process.env.ACCESS_CODE && (body.accessCode || "") !== process.env.ACCESS_CODE) {
+    return res.status(401).json({ error: "접근 코드가 올바르지 않습니다." });
+  }
+  const images = Array.isArray(body.images) ? body.images : [];
+  if (!images.length) return res.status(400).json({ error: "이미지가 없습니다." });
+  const model = process.env.MODEL || "claude-sonnet-5";
+  const content = images.map((im) => ({ type: "image", source: { type: "base64", media_type: im.mediaType || "image/png", data: im.data } }));
+  content.push({ type: "text", text: "이 이미지들에 담긴 텍스트를 원문 그대로 정확히 옮겨 적어라. 특히 영어 지문은 철자·구두점까지 정확하게. 여러 장이면 순서대로 이어서 적고, 필기·워터마크·페이지번호 같은 잡음은 무시한다. 설명 없이 옮긴 텍스트만 출력하라." });
+  try {
+    const resp = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01" },
+      body: JSON.stringify({ model: model, max_tokens: 4000, messages: [{ role: "user", content: content }] })
+    });
+    const data = await resp.json();
+    if (!resp.ok) return res.status(502).json({ error: "이미지 인식 오류: " + (data && data.error ? data.error.message : resp.status) });
+    let out = "";
+    if (data.content && data.content.length) out = data.content.map((c) => c.text || "").join("");
+    return res.json({ text: out });
+  } catch (e) {
+    return res.status(500).json({ error: "요청 실패: " + e.message });
+  }
+});
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log("10-STEP generator running on " + PORT));
