@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>10-STEP 영어 연습지 생성기 (AI)</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/html-docx-js/dist/html-docx.js"></script>
 <style>
 :root{ --navy:#1a3a5c; --blue:#2e6da4; --orange:#b5532a; }
 *{ box-sizing:border-box; }
@@ -262,15 +263,29 @@ function redrawFromJson(){
   try{ RESULT=JSON.parse(document.getElementById("jsonBox").value); render(); setMsg("ok","다시 그렸습니다."); }
   catch(e){ setMsg("err","JSON 형식 오류: "+e.message); }
 }
-function saveWord(){
+function buildDocHtml(){
   var sheet=document.getElementById('sheet');
-  if(!sheet || !sheet.innerHTML.trim() || sheet.innerHTML.indexOf('stepblk')<0){ alert('먼저 연습지를 생성하세요.'); return; }
+  if(!sheet || sheet.innerHTML.indexOf('stepblk')<0){ return null; }
   var css=(document.querySelector('style')||{}).textContent||'';
-  var head="<html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'><head><meta charset='utf-8'><style>@page{size:A4;margin:15mm 14mm;} body{font-family:'Malgun Gothic',sans-serif;}"+css+"</style></head><body>";
-  var html=head+sheet.innerHTML+"</body></html>";
-  var blob=new Blob(['\ufeff'+html],{type:'application/msword'});
+  return "<!DOCTYPE html><html><head><meta charset='utf-8'><style>@page{size:A4;margin:15mm 14mm;} body{font-family:'Malgun Gothic',sans-serif;} "+css+"</style></head><body>"+sheet.innerHTML+"</body></html>";
+}
+function download(blob, name){
   var url=URL.createObjectURL(blob);
-  var a=document.createElement('a'); a.href=url; a.download='10step_연습지.doc'; document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
+  var a=document.createElement('a'); a.href=url; a.download=name; document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
+}
+function saveWord(){
+  var html=buildDocHtml();
+  if(!html){ alert('먼저 연습지를 생성하세요.'); return; }
+  try{
+    if(window.htmlDocx && typeof window.htmlDocx.asBlob==='function'){
+      var blob=window.htmlDocx.asBlob(html);           // 진짜 .docx
+      download(blob, '10step_연습지.docx');
+      return;
+    }
+  }catch(e){ /* 아래 폴백 */ }
+  // 폴백: HTML 기반 .doc
+  var blob2=new Blob(['\ufeff'+html],{type:'application/msword'});
+  download(blob2, '10step_연습지.doc');
 }
 </script>
 </body>
