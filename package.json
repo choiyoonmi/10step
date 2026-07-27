@@ -2,7 +2,14 @@
   "name": "tenstep-generator",
   "version": "1.0.0",
   "private": true,
-  "engines": { "node": ">=18" },
-  "scripts": { "start": "node server.js" },
-  "dependencies": { "express": "^4.19.2" }
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "docx": "^8.5.0",
+    "express": "^4.19.2"
+  }
 }

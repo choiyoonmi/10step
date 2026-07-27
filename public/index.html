@@ -312,13 +312,17 @@ function buildWordHtml(){
   return "<!DOCTYPE html><html><head><meta charset='utf-8'></head><body style=\"font-family:'Malgun Gothic',sans-serif;font-size:13px;line-height:1.5\">"+body+"</body></html>";
 }
 function download(blob, name){ var url=URL.createObjectURL(blob); var a=document.createElement('a'); a.href=url; a.download=name; document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url); }
-function saveWord(){
-  var html=buildWordHtml();
-  if(!html){ alert('먼저 연습지를 생성하세요.'); return; }
+async function saveWord(){
+  if(!RESULT || !RESULT.passages || !RESULT.passages.length){ alert('먼저 연습지를 생성하세요.'); return; }
+  setMsg("load","Word 문서 만드는 중…");
   try{
-    if(window.htmlDocx && typeof window.htmlDocx.asBlob==='function'){ download(window.htmlDocx.asBlob(html), '10step_연습지.docx'); return; }
-  }catch(e){ /* fallback */ }
-  download(new Blob(['﻿'+html],{type:'application/msword'}), '10step_연습지.doc');
+    var body={ passages:RESULT.passages, school:val("school"), grade:val("grade"), examScope:val("examScope"), grammar:val("grammar"), accessCode:val("accessCode") };
+    var resp=await fetch("/api/docx",{ method:"POST", headers:{"content-type":"application/json"}, body:JSON.stringify(body) });
+    if(!resp.ok){ var d={}; try{ d=await resp.json(); }catch(e){} setMsg("err","Word 저장 실패: "+(d.error||resp.status)); return; }
+    var blob=await resp.blob();
+    download(blob, "10step_연습지.docx");
+    setMsg("ok","Word 파일(.docx)을 저장했습니다.");
+  }catch(e){ setMsg("err","Word 저장 실패: "+e.message); }
 }
 </script>
 </body>

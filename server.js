@@ -2,6 +2,7 @@
 // 환경변수: ANTHROPIC_API_KEY(필수), MODEL(기본 claude-sonnet-5), ACCESS_CODE(선택), MAX_PASSAGES(기본 1), MAX_TOKENS(기본 12000)
 
 const express = require("express");
+const docx = require("docx");
 const app = express();
 app.use(express.json({ limit: "25mb" }));
 app.use(express.static("public"));
@@ -153,6 +154,90 @@ function salvagePassages(t) {
   }
   return objs;
 }
+
+app.post("/api/docx", async (req, res) => {
+  const body = req.body || {};
+  if (process.env.ACCESS_CODE && (body.accessCode || "") !== process.env.ACCESS_CODE) return res.status(401).json({ error: "접근 코드가 올바르지 않습니다." });
+  const passages = Array.isArray(body.passages) ? body.passages : [];
+  if (!passages.length) return res.status(400).json({ error: "생성된 지문이 없습니다." });
+
+  const { Document, Packer, Paragraph, TextRun, AlignmentType, BorderStyle, ShadingType } = docx;
+  const PAREN = ["(A)","(B)","(C)","(D)","(E)","(F)","(G)","(H)","(I)","(J)"];
+  const wcount = (t) => (t || "").split(/\s+/).filter((x) => x.length).length;
+  const ul = (n) => { let s = ""; for (let i = 0; i < n; i++) s += "____ "; return s; };
+  const shuffle = (a) => { a = a.slice(); for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); const t = a[i]; a[i] = a[j]; a[j] = t; } return a; };
+
+  const kids = [];
+  const title = (t) => new Paragraph({ alignment: AlignmentType.CENTER, spacing: { after: 120 }, children: [new TextRun({ text: t, bold: true, size: 32, color: "1A3A5C" })] });
+  const small = (t) => new Paragraph({ spacing: { after: 100 }, children: [new TextRun({ text: t, size: 18, color: "555555" })] });
+  const phead = (t, first) => new Paragraph({ pageBreakBefore: !first, spacing: { before: 160, after: 100 }, shading: { type: ShadingType.SOLID, color: "1A3A5C" }, children: [new TextRun({ text: t, bold: true, color: "FFFFFF", size: 26 })] });
+  const stitle = (t) => new Paragraph({ spacing: { before: 160, after: 70 }, border: { bottom: { style: BorderStyle.SINGLE, size: 4, color: "CFDAE6" } }, children: [new TextRun({ text: t, bold: true, color: "2E6DA4", size: 24 })] });
+  const line = (t) => new Paragraph({ spacing: { after: 60 }, children: [new TextRun({ text: t, size: 22 })] });
+  const two = (a, b) => new Paragraph({ spacing: { after: 80 }, children: [new TextRun({ text: a, size: 22 }), new TextRun({ text: b, size: 22, color: "333333", break: 1 })] });
+  const blank = () => new Paragraph({ spacing: { after: 140 }, border: { bottom: { style: BorderStyle.SINGLE, size: 6, color: "BBBBBB" } }, children: [new TextRun({ text: " " })] });
+  const bold = (t) => new Paragraph({ spacing: { after: 80 }, children: [new TextRun({ text: t, bold: true, size: 22 })] });
+
+  kids.push(title("10-STEP 영어 지문 연습지"));
+  const hd = [];
+  if (body.school || body.grade) hd.push((body.school || "") + (body.grade ? " " + body.grade : ""));
+  if (body.examScope) hd.push("출제 범위 · " + body.examScope);
+  if (body.grammar) hd.push("문법 · " + body.grammar);
+  hd.forEach((h) => kids.push(new Paragraph({ spacing: { after: 40 }, children: [new TextRun({ text: h, bold: true, size: 20, color: "243B52" })] })));
+  kids.push(small("원문은 수정·삭제·축약 없이 사용합니다. STEP 7은 어법 오류가 3군데 삽입되어 있습니다. 정답은 없습니다."));
+
+  passages.forEach((p, pi) => {
+    const eng = p.eng || [], kor = p.kor || [], s3 = p.s3 || [], s5 = p.s5 || [], s6 = p.s6 || [], s10 = p.s10 || [];
+    const s7 = p.s7 || "", s9 = (p.s9 && p.s9.length ? p.s9 : []);
+    kids.push(phead("지문 " + (p.num || "") + (p.type ? " [" + p.type + "]" : ""), pi === 0));
+    kids.push(stitle("STEP 1. 영어 + 해석"));
+    eng.forEach((e, i) => kids.push(two((i + 1) + ". " + e, kor[i] || "")));
+    kids.push(stitle("STEP 2. 영어 원문 → 해석 쓰기"));
+    eng.forEach((e, i) => { kids.push(line((i + 1) + ". " + e)); kids.push(blank()); });
+    kids.push(stitle("STEP 3. 해석 제시 → 빈칸 채우기"));
+    eng.forEach((e, i) => kids.push(two((i + 1) + ". " + (kor[i] || ""), s3[i] || e)));
+    kids.push(stitle("STEP 4. 영어 원문 → 해석 쓰기"));
+    eng.forEach((e, i) => { kids.push(line((i + 1) + ". " + e)); kids.push(blank()); });
+    kids.push(stitle("STEP 5. 동사를 원형으로 → 형태 고치기"));
+    eng.forEach((e, i) => { kids.push(line((i + 1) + ". " + (s5[i] || e))); kids.push(blank()); });
+    kids.push(stitle("STEP 6. 어법·어휘 보기 고르기"));
+    eng.forEach((e, i) => kids.push(line((i + 1) + ". " + (s6[i] || e))));
+    kids.push(stitle("STEP 7. 어법상 틀린 곳 3군데 찾아 고치기"));
+    kids.push(line(s7 || eng.join(" ")));
+    kids.push(line("① ________ → ________   ② ________ → ________   ③ ________ → ________"));
+    if (eng.length >= 3) {
+      kids.push(stitle("STEP 8. 첫 문장에 이어질 문장 순서 배열"));
+      kids.push(bold("[주어진 문장] " + eng[0]));
+      const rest = shuffle(eng.slice(1));
+      rest.forEach((e, i) => kids.push(line(PAREN[i] + " " + e)));
+      kids.push(bold("순서: " + rest.map(() => "____").join(" → ")));
+    }
+    let chunks = s9.slice();
+    if (chunks.length < 2) { const g = Math.max(1, Math.ceil(eng.length / 3)); chunks = []; for (let i = 0; i < eng.length; i += g) chunks.push(eng.slice(i, i + g).join(" ")); }
+    if (chunks.length >= 2) {
+      kids.push(stitle("STEP 9. 문단 순서 배열"));
+      const sh = shuffle(chunks);
+      sh.forEach((c, i) => kids.push(line(PAREN[i] + " " + c)));
+      kids.push(bold("순서: " + sh.map(() => "____").join(" → ")));
+    }
+    kids.push(stitle("STEP 10. 영작 (해석 + 제시어, 빈칸 수 = 단어 수)"));
+    eng.forEach((e, i) => {
+      const n = wcount(e);
+      kids.push(line((i + 1) + ". " + (kor[i] || "") + " (" + n + " 단어)"));
+      kids.push(line(ul(n)));
+      if (s10[i]) kids.push(new Paragraph({ spacing: { after: 100 }, children: [new TextRun({ text: "제시어: " + s10[i], size: 20, color: "B5532A" })] }));
+    });
+  });
+
+  try {
+    const doc = new Document({ sections: [{ properties: { page: { margin: { top: 850, bottom: 850, left: 800, right: 800 } } }, children: kids }] });
+    const buf = await Packer.toBuffer(doc);
+    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
+    res.setHeader("Content-Disposition", "attachment; filename=10step.docx");
+    return res.send(buf);
+  } catch (e) {
+    return res.status(500).json({ error: "Word 생성 실패: " + e.message });
+  }
+});
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log("10-STEP generator running on " + PORT));
