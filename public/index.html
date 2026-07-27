@@ -5,7 +5,6 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>10-STEP 영어 연습지 생성기 (AI)</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 <style>
 :root{ --navy:#1a3a5c; --blue:#2e6da4; --orange:#b5532a; }
 *{ box-sizing:border-box; }
@@ -87,10 +86,10 @@ details summary{ cursor:pointer; font-weight:700; color:var(--blue); font-size:1
 
 <div class="wrap">
   <div class="card noprint">
-    <h2><span class="stepnum">1</span>시험범위 PDF·이미지 업로드</h2>
-    <input type="file" id="pdfScope" accept="application/pdf,image/*" class="file" onchange="extractTo(this,'scopeText')">
+    <h2><span class="stepnum">1</span>시험범위 PDF·이미지 업로드 <span class="hint">(여러 장 선택 가능)</span></h2>
+    <input type="file" id="pdfScope" accept="application/pdf,image/*" multiple class="file" onchange="extractTo(this,'scopeText')">
     <div id="exStatus" class="hint" style="margin-top:4px"></div>
-    <label>추출된 범위 텍스트 <span class="hint">— PDF/이미지에서 추출됩니다. 생성할 지문만 남기세요</span></label>
+    <label>추출된 범위 텍스트 <span class="hint">— PDF는 글자 추출, 이미지는 Claude가 읽어 옮깁니다. 생성할 지문만 남기세요</span></label>
     <textarea id="scopeText" style="min-height:150px" placeholder="여기에 시험범위 붙여넣기 또는 위에서 PDF 추출"></textarea>
     <label>문법 포인트 <span class="hint">(선택) — STEP 6·7 출제에 우선 반영</span></label>
     <textarea id="grammar" placeholder="예: 분사구문, 관계대명사, 수일치, 수동태"></textarea>
@@ -143,28 +142,41 @@ function val(id){ var e=document.getElementById(id); return e?e.value.trim():"";
 function shuffle(a){ a=a.slice(); for(var i=a.length-1;i>0;i--){ var j=Math.floor(Math.random()*(i+1)); var t=a[i];a[i]=a[j];a[j]=t; } return a; }
 function setMsg(kind,txt){ var m=document.getElementById("msg"); m.className="msg "+kind; m.textContent=txt; m.style.display="block"; }
 
+function fileToB64(f){ return new Promise(function(res,rej){ var r=new FileReader(); r.onload=function(){ var s=String(r.result||""); var i=s.indexOf(","); res(i>=0?s.slice(i+1):s); }; r.onerror=rej; r.readAsDataURL(f); }); }
+
 async function extractTo(input, targetId){
-  var f=input.files && input.files[0]; if(!f) return;
+  var files=input.files; if(!files || !files.length) return;
   var st=document.getElementById("exStatus");
-  var isPdf = /pdf$/i.test(f.type||"") || /\.pdf$/i.test(f.name||"");
+  var t=document.getElementById(targetId);
+  function isPdf(f){ return /pdf$/i.test(f.type||"") || /\.pdf$/i.test(f.name||""); }
   try{
-    var out="";
-    if(isPdf){
+    var pdfs=[], imgs=[];
+    for(var k=0;k<files.length;k++){ (isPdf(files[k])?pdfs:imgs).push(files[k]); }
+
+    // PDF: 브라우저에서 글자 추출
+    for(var idx=0; idx<pdfs.length; idx++){
       if(!window.pdfjsLib){ alert("PDF 라이브러리를 불러오지 못했습니다(인터넷 확인)."); return; }
-      if(st) st.textContent="PDF에서 글자 추출 중…";
-      var buf=await f.arrayBuffer();
-      var pdf=await pdfjsLib.getDocument({data:buf}).promise;
+      if(st) st.textContent="PDF 글자 추출 중… ("+(idx+1)+"/"+pdfs.length+")";
+      var buf=await pdfs[idx].arrayBuffer();
+      var pdf=await pdfjsLib.getDocument({data:buf}).promise; var out="";
       for(var p=1;p<=pdf.numPages;p++){ var page=await pdf.getPage(p); var tc=await page.getTextContent(); out+=tc.items.map(function(it){return it.str;}).join(" ")+"\n"; }
-    } else {
-      if(!window.Tesseract){ alert("OCR 라이브러리를 불러오지 못했습니다(인터넷 확인)."); return; }
-      if(st) st.textContent="이미지에서 글자 인식 중… (처음엔 언어데이터 받느라 수십 초 걸릴 수 있어요)";
-      var worker=await Tesseract.createWorker(["eng","kor"],1,{ logger:function(m){ if(m.status==="recognizing text" && st){ st.textContent="이미지 글자 인식 중… "+Math.round((m.progress||0)*100)+"%"; } } });
-      var ret=await worker.recognize(f);
-      out=(ret && ret.data && ret.data.text) ? ret.data.text : "";
-      await worker.terminate();
+      t.value=(t.value?t.value+"\n":"")+out.trim();
     }
-    var t=document.getElementById(targetId); t.value=(t.value?t.value+"\n":"")+out.trim();
+
+    // 이미지: Claude 비전으로 정확히 읽기 (한 번에 전송)
+    if(imgs.length){
+      if(imgs.length>5){ if(st) st.textContent="이미지는 한 번에 5장까지 권장합니다. 처음 5장만 처리합니다."; imgs=imgs.slice(0,5); }
+      if(st) st.textContent="이미지를 Claude가 읽는 중… ("+imgs.length+"장)";
+      var payload=[];
+      for(var m=0;m<imgs.length;m++){ var b=await fileToB64(imgs[m]); payload.push({ data:b, mediaType:imgs[m].type||"image/png" }); }
+      var resp=await fetch("/api/ocr",{ method:"POST", headers:{"content-type":"application/json"}, body:JSON.stringify({ images:payload, accessCode:val("accessCode") }) });
+      var data=await resp.json();
+      if(!resp.ok){ if(st) st.textContent=""; alert("이미지 인식 실패: "+(data.error||resp.status)); return; }
+      t.value=(t.value?t.value+"\n":"")+String(data.text||"").trim();
+    }
+
     if(st) st.textContent="추출 완료. 필요한 지문만 남기세요.";
+    input.value="";
   }catch(e){ if(st) st.textContent=""; alert("추출 실패: "+e.message); }
 }
 
