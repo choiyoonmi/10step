@@ -55,7 +55,7 @@ app.post("/api/generate", async (req, res) => {
     const resp = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: { "content-type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01" },
-      body: JSON.stringify({ model: model, max_tokens: 8000, system: GUIDE, messages: [{ role: "user", content: userMsg }] })
+      body: JSON.stringify({ model: model, max_tokens: parseInt(process.env.MAX_TOKENS || "16000", 10), system: GUIDE, messages: [{ role: "user", content: userMsg }] })
     });
     const data = await resp.json();
     if (!resp.ok) return res.status(502).json({ error: "Claude API 오류: " + (data && data.error ? data.error.message : resp.status) });
