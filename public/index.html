@@ -223,29 +223,37 @@ function render(){
   document.getElementById("sheet").innerHTML=o.join('');
 }
 
+function postGen(bodyObj){
+  return fetch("/api/generate",{ method:"POST", headers:{"content-type":"application/json"}, body:JSON.stringify(bodyObj) })
+    .then(function(resp){ return resp.json().then(function(d){ return { ok:resp.ok, status:resp.status, data:d }; }); });
+}
+function showGenError(r){ var d=r.data||{}; var em=d.error||("오류 "+r.status); if(d.stop_reason) em+=" (stop_reason: "+d.stop_reason+")"; if(d.raw) em+=" · 응답 일부: "+String(d.raw).slice(0,180); setMsg("err",em); }
+
 async function aiGenerate(){
   var text=val("scopeText");
-  if(!text){ setMsg("err","시험범위 텍스트를 입력하거나 PDF에서 추출하세요."); return; }
+  if(!text){ setMsg("err","시험범위 텍스트를 입력하거나 PDF/이미지에서 추출하세요."); return; }
   var btn=document.getElementById("genBtn"); btn.disabled=true;
-  setMsg("load","AI가 지침서대로 10STEP을 생성 중입니다… (지문 수에 따라 시간이 걸립니다. 첫 요청은 서버가 깨어나며 최대 1분)");
+  var gram=val("grammar"), code=val("accessCode");
   try{
-    var resp=await fetch("/api/generate",{ method:"POST", headers:{"content-type":"application/json"}, body:JSON.stringify({ text:text, grammar:val("grammar"), accessCode:val("accessCode") }) });
-    var data=await resp.json();
-    if(!resp.ok){
-      var em=data.error||data.errorMessage||("오류 "+resp.status);
-      if(resp.status===401){ em="접근 코드가 올바르지 않습니다."; }
-      if(data.stop_reason){ em+=" (stop_reason: "+data.stop_reason+")"; }
-      if(data.raw){ em+=" · 응답 일부: "+String(data.raw).slice(0,180); }
-      setMsg("err", em); btn.disabled=false; return;
-    }
-    RESULT=data;
-    document.getElementById("jsonBox").value=JSON.stringify(data,null,2);
+    setMsg("load","1/2 단계 · 지문·해석·빈칸(STEP 1~5) 생성 중… (첫 요청은 서버가 깨어나며 최대 1분)");
+    var r1=await postGen({ text:text, grammar:gram, accessCode:code, part:"part1" });
+    if(!r1.ok){ showGenError(r1); btn.disabled=false; return; }
+    var passages=(r1.data.passages||[]);
+    if(!passages.length){ setMsg("err","지문을 찾지 못했습니다. 텍스트에 영어 지문이 있는지 확인하세요."); btn.disabled=false; return; }
+
+    setMsg("load","2/2 단계 · 어법·배열·영작(STEP 6~10) 생성 중…");
+    var slim=passages.map(function(p){ return { num:p.num, type:p.type, eng:p.eng, kor:p.kor }; });
+    var r2=await postGen({ passages:slim, grammar:gram, accessCode:code, part:"part2" });
+    if(!r2.ok){ showGenError(r2); btn.disabled=false; return; }
+    var p2=(r2.data.passages||[]);
+    for(var i=0;i<passages.length;i++){ var b=p2[i]||{}; passages[i].s6=b.s6||[]; passages[i].s7=b.s7||""; passages[i].s9=b.s9||[]; passages[i].s10=b.s10||[]; }
+
+    RESULT={ passages:passages };
+    document.getElementById("jsonBox").value=JSON.stringify(RESULT,null,2);
     render();
-    var cnt=(data.passages||[]).length;
-    setMsg("ok", cnt+"개 지문 생성 완료! 미리보기를 확인하고 필요하면 'AI 결과 직접 수정'에서 다듬으세요.");
+    setMsg("ok", passages.length+"개 지문 생성 완료! 미리보기를 확인하고 필요하면 'AI 결과 직접 수정'에서 다듬으세요.");
   }catch(e){
-    var m=e.message||"";
-    setMsg("err","요청 실패: "+m+" · 무료 서버는 15분 미사용 후 첫 요청이 느릴 수 있어요(깨어나는 중). 30초~1분 뒤 다시 눌러보세요.");
+    setMsg("err","요청 실패: "+e.message+" · 무료 서버는 15분 미사용 후 첫 요청이 느릴 수 있어요. 30초~1분 뒤 다시 눌러보세요.");
   }
   btn.disabled=false;
 }
