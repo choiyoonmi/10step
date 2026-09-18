@@ -26,14 +26,38 @@ const GUIDE = `당신은 학원 영어 지문 10-STEP 연습지 제작 도우미
 
 항상 설명 없이 JSON만 출력한다(코드펜스 금지).`;
 
-function callClaude(userMsg, sys) {
-  const model = process.env.MODEL || "claude-sonnet-5";
-  const maxTok = parseInt(process.env.MAX_TOKENS || "12000", 10);
+function sendClaude(payload) {
   return fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: { "content-type": "application/json", "x-api-key": process.env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" },
-    body: JSON.stringify({ model: model, max_tokens: maxTok, system: sys || GUIDE, messages: [{ role: "user", content: userMsg }] })
+    body: JSON.stringify(payload)
   });
+}
+
+// 지문에서 단어를 고르는 기계적인 작업이라 '생각(thinking)'이 필요 없다.
+// 켜 두면 생각 토큰까지 출력 요금으로 청구되므로(측정 시 출력의 약 80%) 기본은 끔.
+// 끈 설정을 거부하는 모델로 바꿀 때를 대비해, 400이 오면 한 번은 그 설정 없이 재시도한다.
+// 다시 켜려면 환경변수 THINKING=on.
+async function callClaude(userMsg, sys) {
+  const model = process.env.MODEL || "claude-sonnet-5";
+  const maxTok = parseInt(process.env.MAX_TOKENS || "12000", 10);
+  const payload = { model: model, max_tokens: maxTok, system: sys || GUIDE, messages: [{ role: "user", content: userMsg }] };
+  const thinkingOff = (process.env.THINKING || "off").toLowerCase() !== "on";
+  if (thinkingOff) {
+    payload.thinking = { type: "disabled" };
+    payload.output_config = { effort: "low" };
+  }
+  let resp = await sendClaude(payload);
+  if (!resp.ok && thinkingOff && resp.status === 400) {
+    let body = "";
+    try { body = await resp.clone().text(); } catch (e) { body = ""; }
+    if (/thinking|output_config|effort/i.test(body)) {
+      console.warn("이 모델은 thinking/effort 설정을 거부함 — 설정 없이 재시도:", body.slice(0, 200));
+      delete payload.thinking; delete payload.output_config;
+      resp = await sendClaude(payload);
+    }
+  }
+  return resp;
 }
 
 // 지문 찾기 전용 — 본문을 다시 받아 적지 않고 앞뒤 몇 단어(앵커)만 받는다(출력 토큰 절약).
@@ -89,9 +113,9 @@ app.post("/api/generate", async (req, res) => {
       (grammar ? ("[문법 포인트 — choices·errors에 우선 반영]\n" + grammar + "\n\n") : "") +
       "다음을 만든다. kor·blanks·verbs·choices·s10은 길이가 정확히 " + n + "이어야 한다.\n" +
       "- kor: 각 문장의 자연스러운 우리말 해석\n" +
-      "- blanks: 각 문장에서 빈칸으로 만들 중요 명사·형용사 1~3개(문장에 있는 그대로). 없으면 []\n" +
-      "- verbs: 각 문장의 동사 1~2개를 [문장에 쓰인 형태, 동사원형] 쌍으로. 없으면 []\n" +
-      "- choices: 각 문장의 어법·어휘 포인트 1개를 [문장에 쓰인 형태(정답), 그럴듯한 오답] 쌍 하나로. 없으면 []\n" +
+      "- blanks: 문장마다 빈칸으로 만들 중요 명사·형용사 1~3개를 문자열 배열로. 즉 [[\"단어\",\"단어\"], ...] 꼴로 " + n + "개. 없으면 []\n" +
+      "- verbs: 문장마다 동사 한 개를 [문장에 쓰인 형태, 동사원형] 쌍으로. 즉 [[\"쓰인형태\",\"원형\"], ...] 꼴로 " + n + "개. 없으면 []\n" +
+      "- choices: 문장마다 어법·어휘 포인트 한 개를 [문장에 쓰인 형태(정답), 그럴듯한 오답] 쌍으로. 즉 [[\"정답\",\"오답\"], ...] 꼴로 " + n + "개. 정답은 그 문장에 있는 그대로여야 한다\n" +
       "- errors: 지문 전체에서 어법 오류로 바꿀 3곳을 [원문 단어, 틀린 형태] 쌍 3개로(서로 다른 문장에서)\n" +
       "- chunks: 의미 덩어리 3개 내외를 [시작 문장번호, 끝 문장번호]로. 1부터 " + n + "까지 빠짐없이 이어져야 한다\n" +
       "- s10: 각 문장 영작용 제시어(핵심 단어 1~3개를 쉼표로 이은 한 문자열)\n\n" +
@@ -248,7 +272,7 @@ app.post("/api/docx", async (req, res) => {
   if (body.examScope) hd.push("출제 범위 · " + body.examScope);
   if (body.grammar) hd.push("문법 · " + body.grammar);
   hd.forEach((h) => kids.push(new Paragraph({ spacing: { after: 40 }, children: [new TextRun({ text: h, bold: true, size: 20, color: "243B52" })] })));
-  kids.push(small("원문은 수정·삭제·축약 없이 사용합니다. STEP 7은 어법 오류가 3군데 삽입되어 있습니다. 정답은 없습니다."));
+  kids.push(small("원문은 수정·삭제·축약 없이 사용합니다. STEP 7에는 어법 오류가 삽입되어 있습니다(개수는 지문마다 제목에 표시). 정답은 없습니다."));
 
   passages.forEach((p, pi) => {
     const eng = SA(p.eng), kor = SA(p.kor), s3 = SA(p.s3), s5 = SA(p.s5), s6 = SA(p.s6), s10 = SA(p.s10);
@@ -266,7 +290,7 @@ app.post("/api/docx", async (req, res) => {
     eng.forEach((e, i) => { kids.push(line((i + 1) + ". " + (s5[i] || e))); kids.push(blank()); });
     kids.push(stitle("STEP 6. 어법·어휘 보기 고르기"));
     eng.forEach((e, i) => kids.push(line((i + 1) + ". " + (s6[i] || e))));
-    kids.push(stitle("STEP 7. 어법상 틀린 곳 3군데 찾아 고치기"));
+    kids.push(stitle("STEP 7. 어법상 틀린 곳 " + ((parseInt(p.s7n, 10) || 3)) + "군데 찾아 고치기"));
     kids.push(line(s7 || eng.join(" ")));
     kids.push(line("① ________ → ________   ② ________ → ________   ③ ________ → ________"));
     if (eng.length >= 3) {

@@ -149,7 +149,7 @@ var PAREN=["(A)","(B)","(C)","(D)","(E)","(F)","(G)","(H)","(I)","(J)"];
 var RESULT=null;
 function txt(v){ if(v==null) return ""; if(typeof v==="string") return v; if(typeof v==="object"){ return String(v.text||v.sentence||v.eng||v.value||""); } return String(v); }
 function txtArr(a){ return Array.isArray(a)?a.map(txt):[]; }
-function normPassage(p){ p=p||{}; return { num:txt(p.num), type:txt(p.type), eng:txtArr(p.eng), kor:txtArr(p.kor), s3:txtArr(p.s3), s5:txtArr(p.s5), s6:txtArr(p.s6), s7:txt(p.s7), s9:txtArr(p.s9), s10:txtArr(p.s10) }; }
+function normPassage(p){ p=p||{}; return { num:txt(p.num), type:txt(p.type), eng:txtArr(p.eng), kor:txtArr(p.kor), s3:txtArr(p.s3), s5:txtArr(p.s5), s6:txtArr(p.s6), s7:txt(p.s7), s7n:(parseInt(p.s7n,10)||0), s9:txtArr(p.s9), s10:txtArr(p.s10) }; }
 function esc(s){ return txt(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
 function val(id){ var e=document.getElementById(id); return e?e.value.trim():""; }
 function shuffle(a){ a=a.slice(); for(var i=a.length-1;i>0;i--){ var j=Math.floor(Math.random()*(i+1)); var t=a[i];a[i]=a[j];a[j]=t; } return a; }
@@ -227,6 +227,25 @@ function replaceWord(sent, word, repl){
   if(!re.test(sent)){ re=new RegExp(pat,"i"); if(!re.test(sent)) return null; }
   return sent.replace(re, function(m,a,b,c){ return a+repl+c; });
 }
+function pairAt(list, i){
+  // 모델이 [["정답","오답"], ...] 로 줄 때와 문장별로 ["정답","오답"] 로 줄 때를 모두 받는다
+  var v=Array.isArray(list)?list[i]:null;
+  if(!Array.isArray(v)) return null;
+  if(Array.isArray(v[0])) return (Array.isArray(v[0]) && v[0].length>=2) ? [txt(v[0][0]), txt(v[0][1])] : null;
+  return v.length>=2 ? [txt(v[0]), txt(v[1])] : null;
+}
+function pairsAt(list, i){
+  var v=Array.isArray(list)?list[i]:null;
+  if(!Array.isArray(v)) return [];
+  if(Array.isArray(v[0])) return v.filter(function(x){ return Array.isArray(x)&&x.length>=2; }).map(function(x){ return [txt(x[0]), txt(x[1])]; });
+  return v.length>=2 ? [[txt(v[0]), txt(v[1])]] : [];
+}
+function wordsAt(list, i){
+  var v=Array.isArray(list)?list[i]:null;
+  if(!Array.isArray(v)) return [];
+  if(Array.isArray(v[0])) { var out=[]; for(var k=0;k<v.length;k++){ if(Array.isArray(v[k])) out=out.concat(v[k].map(txt)); else out.push(txt(v[k])); } return out; }
+  return v.map(txt);
+}
 function applyEdits(p, ed){
   ed=ed||{};
   var eng=p.eng, n=eng.length;
@@ -234,22 +253,20 @@ function applyEdits(p, ed){
   p.s10=txtArr(ed.s10).slice(0,n);
   var blanks=Array.isArray(ed.blanks)?ed.blanks:[], verbs=Array.isArray(ed.verbs)?ed.verbs:[], choices=Array.isArray(ed.choices)?ed.choices:[];
   p.s3=eng.map(function(s,i){
-    var out=s, ws=Array.isArray(blanks[i])?blanks[i]:[];
+    var out=s, ws=wordsAt(blanks, i);
     for(var k=0;k<ws.length;k++){ var r=replaceWord(out, ws[k], "______"); if(r) out=r; }
     return out;
   });
   p.s5=eng.map(function(s,i){
-    var out=s, vs=Array.isArray(verbs[i])?verbs[i]:[];
-    for(var k=0;k<vs.length;k++){ var pr=vs[k]||[]; var r=replaceWord(out, pr[0], "( "+txt(pr[1])+" )"); if(r) out=r; }
+    var out=s, vs=pairsAt(verbs, i);
+    for(var k=0;k<vs.length;k++){ var r=replaceWord(out, vs[k][0], "( "+vs[k][1]+" )"); if(r) out=r; }
     return out;
   });
   p.s6=eng.map(function(s,i){
-    var cs=Array.isArray(choices[i])?choices[i]:[];
-    var pr=cs[0]||[], a=txt(pr[0]), b=txt(pr[1]);
-    if(!a||!b) return s;
-    var box=(Math.random()<0.5)?("[ "+a+" / "+b+" ]"):("[ "+b+" / "+a+" ]");
-    var r=replaceWord(s, a, box);
-    return r||s;
+    var pr=pairAt(choices, i);
+    if(!pr || !pr[0] || !pr[1]) return s;
+    var box=(Math.random()<0.5)?("[ "+pr[0]+" / "+pr[1]+" ]"):("[ "+pr[1]+" / "+pr[0]+" ]");
+    return replaceWord(s, pr[0], box) || s;
   });
   var para=eng.join(" "), errs=Array.isArray(ed.errors)?ed.errors:[], used=0;
   for(var e=0;e<errs.length && used<3;e++){
@@ -332,7 +349,7 @@ function render(){
   var o=[];
   o.push('<div class="doctitle"><h1>10-STEP 영어 지문 연습지</h1><div class="sub">지침서 기준 자동 생성</div></div>');
   o.push(examHeadHtml());
-  o.push('<div class="rulebox"><b>학습 안내</b> · 원문은 수정·삭제·축약 없이 사용합니다. STEP 7은 어법 오류가 <b>3군데</b> 삽입되어 있습니다. 모든 STEP에 정답은 없습니다. 각 문장은 번호 옆 같은 줄에 작성하세요.</div>');
+  o.push('<div class="rulebox"><b>학습 안내</b> · 원문은 수정·삭제·축약 없이 사용합니다. STEP 7에는 어법 오류가 삽입되어 있습니다(개수는 지문마다 제목에 표시). 모든 STEP에 정답은 없습니다. 각 문장은 번호 옆 같은 줄에 작성하세요.</div>');
   if(!RESULT || !RESULT.passages || !RESULT.passages.length){
     o.push('<div class="rulebox">아직 생성된 지문이 없습니다. ③ [지침서대로 10STEP 생성]을 눌러주세요.</div>');
   } else {
@@ -445,7 +462,7 @@ function wordPassage(p){
   for(i=0;i<eng.length;i++){ o.push("<p>"+(i+1)+". "+esc(s5[i]||eng[i])+"</p><p style='border-bottom:1px solid #bbb'>&nbsp;</p>"); }
   o.push(S("STEP 6. 어법·어휘 보기 고르기"));
   for(i=0;i<eng.length;i++){ o.push("<p>"+(i+1)+". "+esc(s6[i]||eng[i])+"</p>"); }
-  o.push(S("STEP 7. 어법상 틀린 곳 3군데 찾아 고치기"));
+  o.push(S("STEP 7. 어법상 틀린 곳 "+(p.s7n||3)+"군데 찾아 고치기"));
   o.push("<p>"+esc(s7||eng.join(" "))+"</p><p>① "+p8()+" → "+p8()+" &nbsp; ② "+p8()+" → "+p8()+" &nbsp; ③ "+p8()+" → "+p8()+"</p>");
   if(eng.length>=3){
     o.push(S("STEP 8. 첫 문장에 이어질 문장 순서 배열"));
@@ -468,7 +485,7 @@ function buildWordHtml(){
   if(!RESULT || !RESULT.passages || !RESULT.passages.length) return null;
   var head="<h2 style='text-align:center;color:#1a3a5c'>10-STEP 영어 지문 연습지</h2>";
   var eh=examHeadHtml();
-  var body=head+eh+"<p style='font-size:11px;color:#333'>원문은 수정·삭제·축약 없이 사용합니다. STEP 7은 어법 오류가 3군데 삽입되어 있습니다. 정답은 없습니다.</p>";
+  var body=head+eh+"<p style='font-size:11px;color:#333'>원문은 수정·삭제·축약 없이 사용합니다. STEP 7에는 어법 오류가 삽입되어 있습니다(개수는 지문마다 제목에 표시). 정답은 없습니다.</p>";
   for(var i=0;i<RESULT.passages.length;i++){ body+="<div style='page-break-before:always'>"+wordPassage(RESULT.passages[i])+"</div>"; }
   return "<!DOCTYPE html><html><head><meta charset='utf-8'></head><body style=\"font-family:'Malgun Gothic',sans-serif;font-size:13px;line-height:1.5\">"+body+"</body></html>";
 }
