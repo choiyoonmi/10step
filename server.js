@@ -1,5 +1,5 @@
 // Render web service: 시험범위 → 10-STEP 생성 (Claude API). STEP 1~5 / 6~10 분할 생성으로 응답 잘림 최소화.
-// 환경변수: ANTHROPIC_API_KEY(필수), MODEL(기본 claude-sonnet-5), ACCESS_CODE(선택), MAX_PASSAGES(기본 1), MAX_TOKENS(기본 12000)
+// 환경변수: ANTHROPIC_API_KEY(필수), MODEL(기본 claude-sonnet-5), ACCESS_CODE(선택), MAX_PASSAGES(기본 20), MAX_TOKENS(기본 12000)
 
 const express = require("express");
 const docx = require("docx");
@@ -42,7 +42,7 @@ app.post("/api/generate", async (req, res) => {
   if (process.env.ACCESS_CODE && (body.accessCode || "") !== process.env.ACCESS_CODE) return res.status(401).json({ error: "접근 코드가 올바르지 않습니다." });
 
   const grammar = (body.grammar || "").trim();
-  const maxP = parseInt(process.env.MAX_PASSAGES || "1", 10);
+  const maxP = parseInt(process.env.MAX_PASSAGES || "20", 10);
   const part = body.part || "all";
   let userMsg;
 
@@ -55,13 +55,28 @@ app.post("/api/generate", async (req, res) => {
       "[지문들]\n" + JSON.stringify(slim) + "\n\n" +
       (grammar ? ("[문법 포인트 — STEP 6·7 우선 반영]\n" + grammar + "\n\n") : "") +
       '입력과 같은 순서로 JSON만 출력: {"passages":[{"s6":[],"s7":"","s9":[],"s10":[]}]}';
-  } else if (part === "part1") {
+  } else if (part === "scan") {
     const text = (body.text || "").trim();
     if (!text) return res.status(400).json({ error: "시험범위 텍스트가 비어 있습니다." });
     userMsg =
-      "다음 텍스트에서 영어 독해 지문만 골라(최대 " + maxP + "개) STEP 1~5용 데이터만 만든다: eng, kor, s3, s5. 도표·안내문·듣기·선택지·한글 설명은 제외.\n\n" +
+      "다음 텍스트에 들어 있는 영어 독해 지문을 빠짐없이 모두 골라낸다(최대 " + maxP + "개). 지문마다 문장 단위로 나눈 영어 원문 배열(eng)만 만든다. 원문 그대로 옮기고 수정·요약하지 않는다. 해석이나 다른 STEP 데이터는 만들지 않는다. 도표·안내문·듣기·선택지·한글 설명은 제외.\n\n" +
       "[시험범위 텍스트]\n" + text + "\n\n" +
-      'JSON만 출력: {"passages":[{"num":"","type":"","eng":[],"kor":[],"s3":[],"s5":[]}]}';
+      'JSON만 출력: {"passages":[{"num":"","type":"","eng":[]}]}';
+  } else if (part === "part1") {
+    const one = body.passage && Array.isArray(body.passage.eng) && body.passage.eng.length ? body.passage : null;
+    if (one) {
+      userMsg =
+        "아래 지문 하나에 대해 STEP 1~5용 데이터만 만든다: kor, s3, s5. eng 문장 순서를 그대로 쓰고 세 배열의 길이를 eng 문장 수(" + one.eng.length + "개)와 정확히 맞춘다.\n\n" +
+        "[지문]\n" + JSON.stringify({ num: one.num, type: one.type, eng: one.eng }) + "\n\n" +
+        'JSON만 출력: {"passages":[{"kor":[],"s3":[],"s5":[]}]}';
+    } else {
+      const text = (body.text || "").trim();
+      if (!text) return res.status(400).json({ error: "시험범위 텍스트가 비어 있습니다." });
+      userMsg =
+        "다음 텍스트에서 영어 독해 지문만 골라(최대 " + maxP + "개) STEP 1~5용 데이터만 만든다: eng, kor, s3, s5. 도표·안내문·듣기·선택지·한글 설명은 제외.\n\n" +
+        "[시험범위 텍스트]\n" + text + "\n\n" +
+        'JSON만 출력: {"passages":[{"num":"","type":"","eng":[],"kor":[],"s3":[],"s5":[]}]}';
+    }
   } else {
     const text = (body.text || "").trim();
     if (!text) return res.status(400).json({ error: "시험범위 텍스트가 비어 있습니다." });
@@ -240,4 +255,4 @@ app.post("/api/docx", async (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log("10-STEP generator running on " + PORT));
+app.listen(PORT, () => console.log("10-STEP generator running on " + PORT + " · MAX_PASSAGES=" + (process.env.MAX_PASSAGES || "20(기본)") + " · MAX_TOKENS=" + (process.env.MAX_TOKENS || "12000(기본)")));
