@@ -113,8 +113,10 @@ details summary{ cursor:pointer; font-weight:700; color:var(--blue); font-size:1
     <label>접근 코드 <span class="hint">— 학원에서 코드 설정 시 입력(선택)</span></label>
     <input type="password" id="accessCode" placeholder="(설정된 경우만)">
     <div id="msg" class="msg"></div>
+    <div id="usage" class="hint" style="display:none;margin:6px 0 0"></div>
     <div class="btns">
       <button class="accent" id="genBtn" onclick="aiGenerate()">지침서대로 10STEP 생성</button>
+      <button class="ghost" onclick="aiGenerate(true)" title="저장된 결과를 무시하고 AI로 다시 만듭니다(비용 발생)">새로 생성</button>
       <button class="ghost" onclick="window.print()">인쇄 · PDF 저장</button>
       <button class="ghost" onclick="saveWord()">Word로 저장</button>
     </div>
@@ -187,6 +189,115 @@ async function extractTo(input, targetId){
   }catch(e){ if(st) st.textContent=""; alert("추출 실패: "+e.message); }
 }
 
+/* ===== 원문 조립 유틸 — AI는 '바꿀 단어'만 주고, 연습지는 여기서 원문으로 만든다 ===== */
+function normText(t){ return txt(t).replace(/\s+/g," ").trim(); }
+var ABBR=/^(Mr|Mrs|Ms|Dr|Prof|St|vs|etc|Fig|No|Jr|Sr)\.$/i;
+function splitSentences(t){
+  var s=normText(t); if(!s) return [];
+  var toks=s.split(" "), out=[], buf="";
+  for(var i=0;i<toks.length;i++){
+    var w=toks[i];
+    buf += (buf?" ":"")+w;
+    if(!/[.!?]["')\]]?$/.test(w)) continue;
+    if(ABBR.test(w)) continue;
+    if(/^[A-Z]\.$/.test(w)) continue;          // 이니셜 J. 같은 것
+    var nx=toks[i+1];
+    if(!nx || /^["'(\[]?[A-Z0-9]/.test(nx)){ out.push(buf); buf=""; }
+  }
+  if(buf) out.push(buf);
+  return out;
+}
+function sliceByAnchors(src, head, tail){
+  var h=normText(head), t=normText(tail);
+  if(!h) return "";
+  var i=src.indexOf(h);
+  if(i<0) i=src.toLowerCase().indexOf(h.toLowerCase());
+  if(i<0) return "";
+  if(!t) return src.slice(i);
+  var j=src.indexOf(t, i);
+  if(j<0) j=src.toLowerCase().indexOf(t.toLowerCase(), i);
+  if(j<0) return "";
+  return src.slice(i, j+t.length);
+}
+function reEsc(s){ return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
+function replaceWord(sent, word, repl){
+  var w=txt(word).trim(); if(!w || !sent) return null;
+  var pat="(^|[^A-Za-z])("+reEsc(w)+")([^A-Za-z]|$)";
+  var re=new RegExp(pat);
+  if(!re.test(sent)){ re=new RegExp(pat,"i"); if(!re.test(sent)) return null; }
+  return sent.replace(re, function(m,a,b,c){ return a+repl+c; });
+}
+function applyEdits(p, ed){
+  ed=ed||{};
+  var eng=p.eng, n=eng.length;
+  p.kor=txtArr(ed.kor).slice(0,n);
+  p.s10=txtArr(ed.s10).slice(0,n);
+  var blanks=Array.isArray(ed.blanks)?ed.blanks:[], verbs=Array.isArray(ed.verbs)?ed.verbs:[], choices=Array.isArray(ed.choices)?ed.choices:[];
+  p.s3=eng.map(function(s,i){
+    var out=s, ws=Array.isArray(blanks[i])?blanks[i]:[];
+    for(var k=0;k<ws.length;k++){ var r=replaceWord(out, ws[k], "______"); if(r) out=r; }
+    return out;
+  });
+  p.s5=eng.map(function(s,i){
+    var out=s, vs=Array.isArray(verbs[i])?verbs[i]:[];
+    for(var k=0;k<vs.length;k++){ var pr=vs[k]||[]; var r=replaceWord(out, pr[0], "( "+txt(pr[1])+" )"); if(r) out=r; }
+    return out;
+  });
+  p.s6=eng.map(function(s,i){
+    var cs=Array.isArray(choices[i])?choices[i]:[];
+    var pr=cs[0]||[], a=txt(pr[0]), b=txt(pr[1]);
+    if(!a||!b) return s;
+    var box=(Math.random()<0.5)?("[ "+a+" / "+b+" ]"):("[ "+b+" / "+a+" ]");
+    var r=replaceWord(s, a, box);
+    return r||s;
+  });
+  var para=eng.join(" "), errs=Array.isArray(ed.errors)?ed.errors:[], used=0;
+  for(var e=0;e<errs.length && used<3;e++){
+    var pe=errs[e]||[]; var r=replaceWord(para, pe[0], txt(pe[1]));
+    if(r && r!==para){ para=r; used++; }
+  }
+  p.s7=para; p.s7n=used;
+  var ranges=[], ch=Array.isArray(ed.chunks)?ed.chunks:[];
+  for(var c=0;c<ch.length;c++){
+    var a2=parseInt(ch[c] && ch[c][0],10), b2=parseInt(ch[c] && ch[c][1],10);
+    if(!(a2>=1 && b2>=a2 && b2<=n)) { ranges=[]; break; }
+    ranges.push([a2,b2]);
+  }
+  p.s9 = ranges.length>=2 ? ranges.map(function(r){ return eng.slice(r[0]-1, r[1]).join(" "); }) : [];
+  return p;
+}
+
+/* ===== 사용량·비용 ===== */
+var PRICES={ "claude-opus-5":[5,25], "claude-sonnet-5":[2,10], "claude-sonnet-4-6":[3,15], "claude-haiku-4-5":[1,5] };
+var KRW=1400;
+var USAGE={ inTok:0, outTok:0, calls:0, model:"" };
+function resetUsage(){ USAGE={ inTok:0, outTok:0, calls:0, model:"" }; }
+function addUsage(r){
+  var u=r && r.data && r.data.usage;
+  if(!u) return;
+  USAGE.inTok+=(u.input||0); USAGE.outTok+=(u.output||0); USAGE.calls++;
+  if(r.data.model) USAGE.model=r.data.model;
+}
+function usageCost(){
+  var base=PRICES[USAGE.model]||PRICES["claude-sonnet-5"];
+  return USAGE.inTok/1e6*base[0] + USAGE.outTok/1e6*base[1];
+}
+function usageText(){
+  if(!USAGE.calls) return "";
+  var usd=usageCost();
+  return "AI 호출 "+USAGE.calls+"회 · 입력 "+USAGE.inTok.toLocaleString()+" · 출력 "+USAGE.outTok.toLocaleString()+" 토큰 ≈ 약 "+Math.round(usd*KRW).toLocaleString()+"원 ($"+usd.toFixed(3)+", "+(USAGE.model||"모델 미상")+")";
+}
+function showUsage(){ var el=document.getElementById("usage"); if(!el) return; var t=usageText(); el.textContent=t; el.style.display=t?"block":"none"; }
+
+/* ===== 결과 캐시 — 같은 시험범위를 다시 누를 때 돈을 또 쓰지 않는다 ===== */
+function cacheKey(text, gram){
+  var s=normText(text)+" "+normText(gram), h=5381;
+  for(var i=0;i<s.length;i++){ h=((h<<5)+h+s.charCodeAt(i))|0; }
+  return "ts10_"+(h>>>0).toString(36)+"_"+s.length;
+}
+function cacheLoad(k){ try{ var v=localStorage.getItem(k); return v?JSON.parse(v):null; }catch(e){ return null; } }
+function cacheSave(k, obj){ try{ localStorage.setItem(k, JSON.stringify(obj)); }catch(e){ /* 용량 초과 등은 무시 */ } }
+
 function step(title, inner){ return '<div class="stepblk"><div class="stitle">'+title+'</div>'+inner+'</div>'; }
 
 function renderPassage(p){
@@ -201,7 +312,7 @@ function renderPassage(p){
   o.push(step('STEP 4. 영어 원문 → 해석 쓰기', (function(){ var b=[]; for(var i=0;i<eng.length;i++){ b.push('<div class="s2row"><span class="n">'+(i+1)+'.</span> '+esc(eng[i])+'<div class="wline"></div></div>'); } return b.join(''); })()));
   o.push(step('STEP 5. 동사를 원형으로 제시 → 알맞은 형태로 고치기', (function(){ var b=[]; for(var i=0;i<eng.length;i++){ var line=s5[i]||eng[i]; b.push('<div class="s2row"><span class="n">'+(i+1)+'.</span> '+esc(line)+'<div class="wline"></div></div>'); } return b.join(''); })()));
   o.push(step('STEP 6. 어법·어휘 보기 중 알맞은 것 고르기', (function(){ var b=[]; for(var i=0;i<eng.length;i++){ var line=s6[i]||eng[i]; b.push('<div class="s6row"><span class="n">'+(i+1)+'.</span> '+esc(line)+'</div>'); } return b.join(''); })()));
-  o.push(step('STEP 7. 지문 속 어법상 틀린 곳 3군데 찾아 고치기', (function(){ var para=s7||eng.join(' '); return '<div class="para">'+esc(para)+'</div><div class="fixrow">① <span class="wb2"></span> → <span class="wb2"></span>&nbsp;&nbsp; ② <span class="wb2"></span> → <span class="wb2"></span>&nbsp;&nbsp; ③ <span class="wb2"></span> → <span class="wb2"></span></div>'; })()));
+  o.push(step('STEP 7. 지문 속 어법상 틀린 곳 '+(p.s7n||3)+'군데 찾아 고치기', (function(){ var para=s7||eng.join(' '); return '<div class="para">'+esc(para)+'</div><div class="fixrow">① <span class="wb2"></span> → <span class="wb2"></span>&nbsp;&nbsp; ② <span class="wb2"></span> → <span class="wb2"></span>&nbsp;&nbsp; ③ <span class="wb2"></span> → <span class="wb2"></span></div>'; })()));
   o.push(step('STEP 8. 첫 문장에 이어질 문장 순서 배열', (function(){ if(eng.length<3){ return '<div class="empty">문장이 3개 이상일 때 배열됩니다.</div>'; } var first=eng[0], rest=shuffle(eng.slice(1)); var b=['<div class="given"><b>[주어진 문장]</b> '+esc(first)+'</div>']; for(var i=0;i<rest.length;i++){ b.push('<div class="s1row"><span class="lab">'+PAREN[i]+'</span> '+esc(rest[i])+'</div>'); } var ord=[]; for(var j=0;j<rest.length;j++){ ord.push('<span class="wb2"></span>'); } b.push('<div class="orderline">순서: '+ord.join(' → ')+'</div>'); return b.join(''); })()));
   o.push(step('STEP 9. 문단 순서 배열', (function(){ var chunks=(s9&&s9.length?s9.slice():[]); if(chunks.length<2){ var n=eng.length,g=Math.max(1,Math.ceil(n/3)),tmp=[]; for(var i=0;i<n;i+=g){ tmp.push(eng.slice(i,i+g).join(' ')); } chunks=tmp; } if(chunks.length<2){ return '<div class="empty">문단이 2개 이상일 때 배열됩니다.</div>'; } var sh=shuffle(chunks),b=[]; for(var k=0;k<sh.length;k++){ b.push('<div class="chunk"><span class="lab">'+PAREN[k]+'</span> '+esc(sh[k])+'</div>'); } var ord=[]; for(var m=0;m<sh.length;m++){ ord.push('<span class="wb2"></span>'); } b.push('<div class="orderline">순서: '+ord.join(' → ')+'</div>'); return b.join(''); })()));
   o.push(step('STEP 10. 영작 (해석 + 제시어, 빈칸 수 = 단어 수)', (function(){ var b=[]; for(var i=0;i<eng.length;i++){ var n=wc(eng[i]); var boxes=''; for(var j=0;j<n;j++){ boxes+='<span class="wb"></span>'; } var hint=s10[i]?('<div class="hintline">제시어: '+esc(s10[i])+'</div>'):''; b.push('<div class="s10row"><span class="n">'+(i+1)+'.</span> <span class="ko">'+esc(kor[i]||'')+'</span><div class="boxline">'+boxes+'<span class="cnt">('+n+' 단어)</span></div>'+hint+'</div>'); } return b.join(''); })()));
@@ -236,35 +347,71 @@ function postGen(bodyObj){
 }
 function showGenError(r){ var d=r.data||{}; var em=d.error||("오류 "+r.status); if(d.stop_reason) em+=" (stop_reason: "+d.stop_reason+")"; if(d.raw) em+=" · 응답 일부: "+String(d.raw).slice(0,180); setMsg("err",em); }
 
-async function aiGenerate(){
+async function aiGenerate(force){
   var text=val("scopeText");
   if(!text){ setMsg("err","시험범위 텍스트를 입력하거나 PDF/이미지에서 추출하세요."); return; }
   var btn=document.getElementById("genBtn"); btn.disabled=true;
   var gram=val("grammar"), code=val("accessCode");
+  var key=cacheKey(text, gram);
+  var store=(force?null:cacheLoad(key)) || { scan:null, done:{} };
+  resetUsage(); showUsage();
   try{
-    setMsg("load","1단계 · 지문 찾는 중… (첫 요청은 서버가 깨어나며 최대 1분)");
-    var r0=await postGen({ text:text, grammar:gram, accessCode:code, part:"scan" });
-    if(!r0.ok){ showGenError(r0); btn.disabled=false; return; }
-    var found=(r0.data.passages||[]).map(normPassage).filter(function(p){ return p.eng.length; });
+    var found=store.scan;
+    if(!found || !found.length){
+      setMsg("load","1단계 · 지문 찾는 중… (첫 요청은 서버가 깨어나며 최대 1분)");
+      var r0=await postGen({ text:text, accessCode:code, part:"scan" });
+      addUsage(r0); showUsage();
+      if(!r0.ok){ showGenError(r0); btn.disabled=false; return; }
+      var src=normText(text), list=(r0.data.passages||[]), miss=[];
+      found=[];
+      for(var i=0;i<list.length;i++){
+        var it=normPassage(list[i]);
+        var eng=splitSentences(sliceByAnchors(src, (list[i]||{}).head, (list[i]||{}).tail));
+        if(eng.length) found.push({ num:it.num||String(found.length+1), type:it.type, eng:eng });
+        else miss.push({ num:it.num, type:it.type, head:txt((list[i]||{}).head), tail:txt((list[i]||{}).tail) });
+      }
+      if(miss.length){
+        setMsg("load","1단계 · 원문을 못 찾은 지문 "+miss.length+"개 확인 중…");
+        var rr=await postGen({ text:text, misses:miss, accessCode:code, part:"recover" });
+        addUsage(rr); showUsage();
+        if(rr.ok){
+          var rec=(rr.data.passages||[]).map(normPassage);
+          for(var m=0;m<rec.length;m++){ if(rec[m].eng.length) found.push({ num:rec[m].num||String(found.length+1), type:rec[m].type, eng:rec[m].eng }); }
+        }
+      }
+      store.scan=found; store.done={}; cacheSave(key, store);
+    } else {
+      setMsg("load","1단계 · 저장된 지문 목록을 사용합니다(추가 비용 없음).");
+    }
     if(!found.length){ setMsg("err","지문을 찾지 못했습니다. 텍스트에 영어 지문이 있는지 확인하세요."); btn.disabled=false; return; }
-    var total=found.length, made=[], failed=0, lastErr=null;
+
+    var total=found.length, made=[], failed=0, reused=0, lastErr=null;
     RESULT={ passages:made };
     for(var i=0;i<total;i++){
-      var p={ num:(found[i].num||String(i+1)), type:(found[i].type||""), eng:found[i].eng, kor:[], s3:[], s5:[], s6:[], s7:"", s9:[], s10:[] };
-      setMsg("load","2단계 · 지문 "+(i+1)+"/"+total+" · 해석·빈칸(STEP 1~5) 생성 중…");
-      var ra=await postGen({ passage:{ num:p.num, type:p.type, eng:p.eng }, grammar:gram, accessCode:code, part:"part1" });
-      if(ra.ok){ var a=normPassage((ra.data.passages||[])[0]); p.kor=a.kor; p.s3=a.s3; p.s5=a.s5; }
-      else { failed++; lastErr=ra; }
-      setMsg("load","2단계 · 지문 "+(i+1)+"/"+total+" · 어법·배열·영작(STEP 6~10) 생성 중…");
-      var rb=await postGen({ passages:[{ num:p.num, type:p.type, eng:p.eng, kor:p.kor }], grammar:gram, accessCode:code, part:"part2" });
-      if(rb.ok){ var b=normPassage((rb.data.passages||[])[0]); p.s6=b.s6; p.s7=b.s7; p.s9=b.s9; p.s10=b.s10; }
-      else { failed++; lastErr=rb; }
+      var hit=store.done && store.done[i];
+      if(hit && hit.eng && hit.eng.length && hit.kor && hit.kor.length){
+        made.push(hit); reused++;
+        setMsg("load","2단계 · 지문 "+(i+1)+"/"+total+" · 저장된 결과 사용(비용 0)");
+        render();
+        continue;
+      }
+      var p={ num:found[i].num, type:found[i].type, eng:found[i].eng, kor:[], s3:[], s5:[], s6:[], s7:"", s7n:0, s9:[], s10:[] };
+      setMsg("load","2단계 · 지문 "+(i+1)+"/"+total+" 연습지 만드는 중…");
+      var rd=await postGen({ passage:{ num:p.num, type:p.type, eng:p.eng }, grammar:gram, accessCode:code, part:"detail" });
+      addUsage(rd); showUsage();
+      if(rd.ok){
+        applyEdits(p, (rd.data.passages||[])[0]||{});
+        store.done[i]=p; cacheSave(key, store);
+      } else { failed++; lastErr=rd; }
       made.push(p);
       document.getElementById("jsonBox").value=JSON.stringify(RESULT,null,2);
       render();
     }
-    if(failed){ showGenError(lastErr); setMsg("err", total+"개 지문 중 일부 STEP을 못 만들었습니다("+failed+"건). 미리보기는 만들어진 것까지 나와 있고, 다시 누르면 새로 시도합니다."); }
-    else { setMsg("ok", total+"개 지문 생성 완료! 미리보기 확인 후 인쇄·PDF 또는 Word로 저장하세요."); }
+    document.getElementById("jsonBox").value=JSON.stringify(RESULT,null,2);
+    render(); showUsage();
+    var tail=(reused?(" · 저장된 지문 "+reused+"개는 다시 만들지 않았습니다"):"");
+    if(failed){ if(lastErr) showGenError(lastErr); setMsg("err", total+"개 지문 중 "+failed+"개를 못 만들었습니다. 다시 누르면 실패한 지문만 새로 만듭니다."+tail); }
+    else { setMsg("ok", total+"개 지문 생성 완료! 인쇄·PDF 또는 Word로 저장하세요."+tail); }
   }catch(e){
     setMsg("err","요청 실패: "+e.message+" · 무료 서버는 15분 미사용 후 첫 요청이 느릴 수 있어요. 30초~1분 뒤 다시 눌러보세요.");
   }

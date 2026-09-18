@@ -26,15 +26,25 @@ const GUIDE = `당신은 학원 영어 지문 10-STEP 연습지 제작 도우미
 
 항상 설명 없이 JSON만 출력한다(코드펜스 금지).`;
 
-function callClaude(userMsg) {
+function callClaude(userMsg, sys) {
   const model = process.env.MODEL || "claude-sonnet-5";
   const maxTok = parseInt(process.env.MAX_TOKENS || "12000", 10);
   return fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: { "content-type": "application/json", "x-api-key": process.env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" },
-    body: JSON.stringify({ model: model, max_tokens: maxTok, system: GUIDE, messages: [{ role: "user", content: userMsg }] })
+    body: JSON.stringify({ model: model, max_tokens: maxTok, system: sys || GUIDE, messages: [{ role: "user", content: userMsg }] })
   });
 }
+
+// 지문 찾기 전용 — 본문을 다시 받아 적지 않고 앞뒤 몇 단어(앵커)만 받는다(출력 토큰 절약).
+const SCAN_SYS = `너는 영어 시험범위 텍스트에서 '영어 독해 지문'만 찾아내는 도구다. 도표(그래프·수치) 문항, 안내문(목록·표), 듣기 대본, 선택지(①②③), 한글 설명은 지문이 아니다. 문장으로 이루어진 영어 독해 지문만 고른다. 항상 설명 없이 JSON만 출력한다(코드펜스 금지).`;
+
+// 연습지 데이터 전용 — 원문을 다시 쓰지 않고 '바꿀 단어'만 받는다(출력 토큰 절약 + 원문 보존).
+const DETAIL_SYS = `너는 영어 지문으로 학원 연습지를 만드는 도구다.
+
+[절대 규칙] 영어 원문을 다시 쓰지 않는다. 바꿀 '단어'만 고른다. 고른 단어는 반드시 그 문장에 원문 그대로 등장하는 형태여야 한다(대소문자·어미까지 동일). 문장에 없는 단어를 지어내면 안 된다.
+
+항상 설명 없이 JSON만 출력한다(코드펜스 금지).`;
 
 app.post("/api/generate", async (req, res) => {
   const body = req.body || {};
@@ -44,9 +54,49 @@ app.post("/api/generate", async (req, res) => {
   const grammar = (body.grammar || "").trim();
   const maxP = parseInt(process.env.MAX_PASSAGES || "20", 10);
   const part = body.part || "all";
-  let userMsg;
+  let userMsg, sys = GUIDE;
 
-  if (part === "part2") {
+  if (part === "scan") {
+    const text = (body.text || "").trim();
+    if (!text) return res.status(400).json({ error: "시험범위 텍스트가 비어 있습니다." });
+    sys = SCAN_SYS;
+    userMsg =
+      "아래 텍스트에서 영어 독해 지문을 빠짐없이 찾아라(최대 " + maxP + "개). 지문 본문은 옮겨 적지 말고, 지문마다 다음 네 가지만 만든다.\n" +
+      "- num: 문항 번호(없으면 빈 문자열)\n" +
+      "- type: 유형(글의 목적/주제/어법 등, 모르면 빈 문자열)\n" +
+      "- head: 그 지문의 '첫 6단어'를 원문 그대로\n" +
+      "- tail: 그 지문의 '마지막 6단어'를 원문 그대로(문장부호 포함)\n\n" +
+      "[텍스트]\n" + text + "\n\n" +
+      'JSON만 출력: {"passages":[{"num":"","type":"","head":"","tail":""}]}';
+  } else if (part === "recover") {
+    const text = (body.text || "").trim();
+    const misses = Array.isArray(body.misses) ? body.misses.slice(0, maxP) : [];
+    if (!text || !misses.length) return res.status(400).json({ error: "원문을 확인할 지문 정보가 없습니다." });
+    sys = SCAN_SYS;
+    userMsg =
+      "아래 텍스트에서 다음 지문들의 본문을 찾아 문장 단위로 나눠라. 원문 그대로 옮기고 수정·요약하지 않는다.\n\n" +
+      "[찾을 지문]\n" + JSON.stringify(misses) + "\n\n" +
+      "[텍스트]\n" + text + "\n\n" +
+      'JSON만 출력: {"passages":[{"num":"","type":"","eng":[]}]}';
+  } else if (part === "detail") {
+    const one = body.passage && Array.isArray(body.passage.eng) && body.passage.eng.length ? body.passage : null;
+    if (!one) return res.status(400).json({ error: "지문 데이터가 없습니다." });
+    const n = one.eng.length;
+    const numbered = one.eng.map((e, i) => (i + 1) + ". " + e).join("\n");
+    sys = DETAIL_SYS;
+    userMsg =
+      "[지문] (문장 1~" + n + ")\n" + numbered + "\n\n" +
+      (grammar ? ("[문법 포인트 — choices·errors에 우선 반영]\n" + grammar + "\n\n") : "") +
+      "다음을 만든다. kor·blanks·verbs·choices·s10은 길이가 정확히 " + n + "이어야 한다.\n" +
+      "- kor: 각 문장의 자연스러운 우리말 해석\n" +
+      "- blanks: 각 문장에서 빈칸으로 만들 중요 명사·형용사 1~3개(문장에 있는 그대로). 없으면 []\n" +
+      "- verbs: 각 문장의 동사 1~2개를 [문장에 쓰인 형태, 동사원형] 쌍으로. 없으면 []\n" +
+      "- choices: 각 문장의 어법·어휘 포인트 1개를 [문장에 쓰인 형태(정답), 그럴듯한 오답] 쌍 하나로. 없으면 []\n" +
+      "- errors: 지문 전체에서 어법 오류로 바꿀 3곳을 [원문 단어, 틀린 형태] 쌍 3개로(서로 다른 문장에서)\n" +
+      "- chunks: 의미 덩어리 3개 내외를 [시작 문장번호, 끝 문장번호]로. 1부터 " + n + "까지 빠짐없이 이어져야 한다\n" +
+      "- s10: 각 문장 영작용 제시어(핵심 단어 1~3개를 쉼표로 이은 한 문자열)\n\n" +
+      'JSON만 출력: {"passages":[{"kor":[],"blanks":[],"verbs":[],"choices":[],"errors":[],"chunks":[],"s10":[]}]}';
+  } else if (part === "part2") {
     const passages = Array.isArray(body.passages) ? body.passages : [];
     if (!passages.length) return res.status(400).json({ error: "part2 요청에 지문 데이터가 없습니다." });
     const slim = passages.map((p) => ({ num: p.num, type: p.type, eng: p.eng, kor: p.kor }));
@@ -55,13 +105,6 @@ app.post("/api/generate", async (req, res) => {
       "[지문들]\n" + JSON.stringify(slim) + "\n\n" +
       (grammar ? ("[문법 포인트 — STEP 6·7 우선 반영]\n" + grammar + "\n\n") : "") +
       '입력과 같은 순서로 JSON만 출력: {"passages":[{"s6":[],"s7":"","s9":[],"s10":[]}]}';
-  } else if (part === "scan") {
-    const text = (body.text || "").trim();
-    if (!text) return res.status(400).json({ error: "시험범위 텍스트가 비어 있습니다." });
-    userMsg =
-      "다음 텍스트에 들어 있는 영어 독해 지문을 빠짐없이 모두 골라낸다(최대 " + maxP + "개). 지문마다 문장 단위로 나눈 영어 원문 배열(eng)만 만든다. 원문 그대로 옮기고 수정·요약하지 않는다. 해석이나 다른 STEP 데이터는 만들지 않는다. 도표·안내문·듣기·선택지·한글 설명은 제외.\n\n" +
-      "[시험범위 텍스트]\n" + text + "\n\n" +
-      'JSON만 출력: {"passages":[{"num":"","type":"","eng":[]}]}';
   } else if (part === "part1") {
     const one = body.passage && Array.isArray(body.passage.eng) && body.passage.eng.length ? body.passage : null;
     if (one) {
@@ -87,19 +130,23 @@ app.post("/api/generate", async (req, res) => {
   }
 
   try {
-    const resp = await callClaude(userMsg);
+    const resp = await callClaude(userMsg, sys);
     const data = await resp.json();
     if (!resp.ok) return res.status(502).json({ error: "Claude API 오류: " + (data && data.error ? data.error.message : resp.status) });
     let out = "";
     if (data.content && data.content.length) out = data.content.map((c) => c.text || "").join("");
+    const meta = {
+      model: data.model || process.env.MODEL || "claude-sonnet-5",
+      usage: { input: (data.usage && data.usage.input_tokens) || 0, output: (data.usage && data.usage.output_tokens) || 0 }
+    };
     const parsed = extractPayload(out);
-    if (part === "scan" && parsed && Array.isArray(parsed.passages) && !parsed.passages.length) return res.json({ passages: [] });
+    if (part === "scan" && parsed && Array.isArray(parsed.passages) && !parsed.passages.length) return res.json(Object.assign({ passages: [] }, meta));
     if (!parsed || !parsed.passages || !parsed.passages.length) {
       console.error("PARSE FAIL part=", part, " stop_reason=", data.stop_reason, " raw(first 1200):\n", out.slice(0, 1200));
       return res.status(502).json({ error: "AI 응답을 해석하지 못했습니다.", stop_reason: data.stop_reason || "", raw: out.slice(0, 600) });
     }
     if (data.stop_reason === "max_tokens") console.warn("part=", part, " max_tokens로 잘렸지만 완성분만 반환. passages=", parsed.passages.length);
-    return res.json(parsed);
+    return res.json(Object.assign(parsed, meta));
   } catch (e) {
     return res.status(500).json({ error: "요청 실패: " + e.message });
   }
@@ -258,4 +305,4 @@ app.post("/api/docx", async (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log("10-STEP generator running on " + PORT + " · MAX_PASSAGES=" + (process.env.MAX_PASSAGES || "20(기본)") + " · MAX_TOKENS=" + (process.env.MAX_TOKENS || "12000(기본)")));
+app.listen(PORT, () => console.log("10-STEP generator running on " + PORT + " · MODEL=" + (process.env.MODEL || "claude-sonnet-5(기본)") + " · MAX_PASSAGES=" + (process.env.MAX_PASSAGES || "20(기본)") + " · MAX_TOKENS=" + (process.env.MAX_TOKENS || "12000(기본)")));
