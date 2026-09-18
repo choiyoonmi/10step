@@ -93,6 +93,7 @@ app.post("/api/generate", async (req, res) => {
     let out = "";
     if (data.content && data.content.length) out = data.content.map((c) => c.text || "").join("");
     const parsed = extractPayload(out);
+    if (part === "scan" && parsed && Array.isArray(parsed.passages) && !parsed.passages.length) return res.json({ passages: [] });
     if (!parsed || !parsed.passages || !parsed.passages.length) {
       console.error("PARSE FAIL part=", part, " stop_reason=", data.stop_reason, " raw(first 1200):\n", out.slice(0, 1200));
       return res.status(502).json({ error: "AI 응답을 해석하지 못했습니다.", stop_reason: data.stop_reason || "", raw: out.slice(0, 600) });
