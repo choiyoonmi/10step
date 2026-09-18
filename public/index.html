@@ -145,11 +145,14 @@ details summary{ cursor:pointer; font-weight:700; color:var(--blue); font-size:1
 if (window.pdfjsLib) pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
 var PAREN=["(A)","(B)","(C)","(D)","(E)","(F)","(G)","(H)","(I)","(J)"];
 var RESULT=null;
-function esc(s){ return (s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
+function txt(v){ if(v==null) return ""; if(typeof v==="string") return v; if(typeof v==="object"){ return String(v.text||v.sentence||v.eng||v.value||""); } return String(v); }
+function txtArr(a){ return Array.isArray(a)?a.map(txt):[]; }
+function normPassage(p){ p=p||{}; return { num:txt(p.num), type:txt(p.type), eng:txtArr(p.eng), kor:txtArr(p.kor), s3:txtArr(p.s3), s5:txtArr(p.s5), s6:txtArr(p.s6), s7:txt(p.s7), s9:txtArr(p.s9), s10:txtArr(p.s10) }; }
+function esc(s){ return txt(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
 function val(id){ var e=document.getElementById(id); return e?e.value.trim():""; }
 function shuffle(a){ a=a.slice(); for(var i=a.length-1;i>0;i--){ var j=Math.floor(Math.random()*(i+1)); var t=a[i];a[i]=a[j];a[j]=t; } return a; }
 function setMsg(kind,txt){ var m=document.getElementById("msg"); m.className="msg "+kind; m.textContent=txt; m.style.display="block"; }
-function wc(sentence){ return (sentence||"").split(/\s+/).filter(function(x){return x.length;}).length; }
+function wc(sentence){ return txt(sentence).split(/\s+/).filter(function(x){return x.length;}).length; }
 
 function fileToB64(f){ return new Promise(function(res,rej){ var r=new FileReader(); r.onload=function(){ var s=String(r.result||""); var i=s.indexOf(","); res(i>=0?s.slice(i+1):s); }; r.onerror=rej; r.readAsDataURL(f); }); }
 
@@ -242,7 +245,7 @@ async function aiGenerate(){
     setMsg("load","1단계 · 지문 찾는 중… (첫 요청은 서버가 깨어나며 최대 1분)");
     var r0=await postGen({ text:text, grammar:gram, accessCode:code, part:"scan" });
     if(!r0.ok){ showGenError(r0); btn.disabled=false; return; }
-    var found=(r0.data.passages||[]).filter(function(p){ return p && p.eng && p.eng.length; });
+    var found=(r0.data.passages||[]).map(normPassage).filter(function(p){ return p.eng.length; });
     if(!found.length){ setMsg("err","지문을 찾지 못했습니다. 텍스트에 영어 지문이 있는지 확인하세요."); btn.disabled=false; return; }
     var total=found.length, made=[], failed=0, lastErr=null;
     RESULT={ passages:made };
@@ -250,11 +253,11 @@ async function aiGenerate(){
       var p={ num:(found[i].num||String(i+1)), type:(found[i].type||""), eng:found[i].eng, kor:[], s3:[], s5:[], s6:[], s7:"", s9:[], s10:[] };
       setMsg("load","2단계 · 지문 "+(i+1)+"/"+total+" · 해석·빈칸(STEP 1~5) 생성 중…");
       var ra=await postGen({ passage:{ num:p.num, type:p.type, eng:p.eng }, grammar:gram, accessCode:code, part:"part1" });
-      if(ra.ok){ var a=(ra.data.passages||[])[0]||{}; p.kor=a.kor||[]; p.s3=a.s3||[]; p.s5=a.s5||[]; }
+      if(ra.ok){ var a=normPassage((ra.data.passages||[])[0]); p.kor=a.kor; p.s3=a.s3; p.s5=a.s5; }
       else { failed++; lastErr=ra; }
       setMsg("load","2단계 · 지문 "+(i+1)+"/"+total+" · 어법·배열·영작(STEP 6~10) 생성 중…");
       var rb=await postGen({ passages:[{ num:p.num, type:p.type, eng:p.eng, kor:p.kor }], grammar:gram, accessCode:code, part:"part2" });
-      if(rb.ok){ var b=(rb.data.passages||[])[0]||{}; p.s6=b.s6||[]; p.s7=b.s7||""; p.s9=b.s9||[]; p.s10=b.s10||[]; }
+      if(rb.ok){ var b=normPassage((rb.data.passages||[])[0]); p.s6=b.s6; p.s7=b.s7; p.s9=b.s9; p.s10=b.s10; }
       else { failed++; lastErr=rb; }
       made.push(p);
       document.getElementById("jsonBox").value=JSON.stringify(RESULT,null,2);
@@ -269,7 +272,7 @@ async function aiGenerate(){
 }
 
 function redrawFromJson(){
-  try{ RESULT=JSON.parse(document.getElementById("jsonBox").value); render(); setMsg("ok","다시 그렸습니다."); }
+  try{ RESULT=JSON.parse(document.getElementById("jsonBox").value); if(RESULT&&Array.isArray(RESULT.passages)) RESULT.passages=RESULT.passages.map(normPassage); render(); setMsg("ok","다시 그렸습니다."); }
   catch(e){ setMsg("err","JSON 형식 오류: "+e.message); }
 }
 

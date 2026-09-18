@@ -179,7 +179,9 @@ app.post("/api/docx", async (req, res) => {
 
   const { Document, Packer, Paragraph, TextRun, AlignmentType, BorderStyle, ShadingType } = docx;
   const PAREN = ["(A)","(B)","(C)","(D)","(E)","(F)","(G)","(H)","(I)","(J)"];
-  const wcount = (t) => (t || "").split(/\s+/).filter((x) => x.length).length;
+  const S = (v) => (v == null ? "" : (typeof v === "string" ? v : (typeof v === "object" ? String(v.text || v.sentence || v.eng || v.value || "") : String(v))));
+  const SA = (a) => (Array.isArray(a) ? a.map(S) : []);
+  const wcount = (t) => S(t).split(/\s+/).filter((x) => x.length).length;
   const ul = (n) => { let s = ""; for (let i = 0; i < n; i++) s += "____ "; return s; };
   const shuffle = (a) => { a = a.slice(); for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); const t = a[i]; a[i] = a[j]; a[j] = t; } return a; };
 
@@ -202,9 +204,9 @@ app.post("/api/docx", async (req, res) => {
   kids.push(small("원문은 수정·삭제·축약 없이 사용합니다. STEP 7은 어법 오류가 3군데 삽입되어 있습니다. 정답은 없습니다."));
 
   passages.forEach((p, pi) => {
-    const eng = p.eng || [], kor = p.kor || [], s3 = p.s3 || [], s5 = p.s5 || [], s6 = p.s6 || [], s10 = p.s10 || [];
-    const s7 = p.s7 || "", s9 = (p.s9 && p.s9.length ? p.s9 : []);
-    kids.push(phead("지문 " + (p.num || "") + (p.type ? " [" + p.type + "]" : ""), pi === 0));
+    const eng = SA(p.eng), kor = SA(p.kor), s3 = SA(p.s3), s5 = SA(p.s5), s6 = SA(p.s6), s10 = SA(p.s10);
+    const s7 = S(p.s7), s9 = SA(p.s9);
+    kids.push(phead("지문 " + S(p.num) + (S(p.type) ? " [" + S(p.type) + "]" : ""), pi === 0));
     kids.push(stitle("STEP 1. 영어 + 해석"));
     eng.forEach((e, i) => kids.push(two((i + 1) + ". " + e, kor[i] || "")));
     kids.push(stitle("STEP 2. 영어 원문 → 해석 쓰기"));
